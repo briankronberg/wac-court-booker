@@ -1,8 +1,11 @@
 # WAC Court Booker
 
-Books tennis courts at WAC Hartland the moment each slot becomes bookable, 169 hours before it starts. You set up your bookings once in a simple menu, and Windows runs each one in the background at the right time.
+This project is for WAC Lake Country people that would like a better way to automate the booking of tennis courts week after week at the same time. You set up your bookings once in a simple menu, and Windows runs each one in the background at the right time.  For example, I use it to book courts every Saturday morning so I don't need to wake up at 5AM just to book courts online.  The install is easy and the simple interface makes it easy to set up automatic bookings for yourself.  The same rules of the WAC still apply.  
+   - You can only book 1 week and 1 hour ahead.
+   - You can only book 2 courts on the same day.
+   - You must include someone from your family or buddy list in a booking and they are also limited to just 2 court bookings a day.
 
-For Windows 10 and 11.
+Windows only for now as I do not have a Mac to test the builds on. [DESIGN.md](DESIGN.md) explains the decisions I made while building the process with AI.  AI is not required to use this project, it only uses PowerShell and Python which are free and installed for you during setup.
 
 ## Install
 
