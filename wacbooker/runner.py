@@ -153,7 +153,10 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
         from .engine import RunResult
         return RunResult("not_booked", f"Not booked: {e}. Book on the club site.")
     try:
-        return await Engine(b, occ, site, rc, log=log).run()
+        res = await Engine(b, occ, site, rc, log=log).run()
+        if res.status == "not_booked":
+            await site.release()
+        return res
     finally:
         await site.close()
 

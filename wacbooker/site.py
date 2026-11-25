@@ -448,6 +448,17 @@ class ClubSite:
     async def stage(self, slot: Slot) -> None:
         """Grid -> slot -> Booking Details -> participants page with the
         booking loaded. Raises SiteError('taken') if the slot isn't offered."""
+        if self.staged == slot and self.family_url:
+            # Same slot again: its participants page usually still works, which
+            # avoids adding the slot to the cart a second time.
+            try:
+                await self.goto(self.family_url, timeout=60)
+                if await self._family_loaded(slot, 30):
+                    self.last_fresh = time.time()
+                    self.log("back on the staged participants page")
+                    return
+            except SiteError:
+                pass
         shown = await self.load_grid(slot.service, slot.date, slot.length, slot.start)
         if not shown:
             shown = await self.load_grid(slot.service, slot.date, slot.length, slot.start)
@@ -518,6 +529,14 @@ class ClubSite:
                 self.staged = None
                 return
         raise SiteError("still on the participants page after Back")
+
+    async def release(self) -> None:
+        """Best effort: drop a staged, unbooked cart item."""
+        try:
+            if "AddFamilyMembers" in await self.url():
+                await self.back_out()
+        except SiteError as e:
+            self.log(f"couldn't leave the participants page: {e}")
 
     # ---------------------------------------------------------------- commit
     async def _rows(self) -> list[dict]:

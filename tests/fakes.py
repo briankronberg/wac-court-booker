@@ -124,6 +124,10 @@ class FakeSite:
         await self.clock.sleep(5)
         return self.report
 
+    async def release(self) -> None:
+        self.calls.append("release")
+        self.staged = None
+
     async def slot_still_open(self, slot):
         self.calls.append("grid")
         self.pending_unknown = False

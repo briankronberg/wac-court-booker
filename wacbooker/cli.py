@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("selftest", help="check this install from where it runs (no club sign-in)")
     st.add_argument("--out", help="also write the result as JSON here")
     st.add_argument("--browser", action="store_true", help="also start the browser and open the club sign-in page")
+    st.add_argument("--toast", action="store_true", help="also show a test toast")
     sub.add_parser("version")
     return p
 
@@ -95,7 +96,11 @@ def main(argv: list[str] | None = None) -> int:
         print("bookings.yaml has a problem:\n  " + "\n  ".join(cfg.errors))
         return 2
     if cmd == "rebuild-tasks":
-        r = scheduler.sync(cfg)
+        pw = None
+        if cfg.run_signed_out:
+            import getpass
+            pw = getpass.getpass("Windows password, for tasks that run while signed out (Enter to skip): ") or None
+        r = scheduler.sync(cfg, pw)
         print(f"registered {r.registered}, removed {r.removed}, logon {r.logon}. {r.note}")
         for e in r.errors:
             print(f"ERROR: {e}")
@@ -114,11 +119,11 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"No booking called '{args.booking}'.")
         return 0 if asyncio.run(runner.dry_run(cfg, b, print)) else 1
     if cmd == "selftest":
-        return selftest(cfg, args.out, args.browser)
+        return selftest(cfg, args.out, args.browser, args.toast)
     return 2
 
 
-def selftest(cfg, out: str | None, browser: bool) -> int:
+def selftest(cfg, out: str | None, browser: bool, toast: bool = False) -> int:
     """What a scheduled run depends on, checked from wherever this runs."""
     from . import creds, notify, paths, scheduler
     rep: dict = {"version": __version__, "python": sys.executable, "home": str(paths.home()),
@@ -150,6 +155,8 @@ def selftest(cfg, out: str | None, browser: bool) -> int:
             rep["browser_ok"] = asyncio.run(_b())
         except Exception as e:  # noqa: BLE001
             rep["browser_ok"] = f"{type(e).__name__}: {str(e)[:200]}"
+    if toast:
+        rep["toast_shown"] = notify.toast(APP_NAME, "Self-test: notifications work. Nothing was booked.")
     text = json.dumps(rep, indent=1)
     print(text)
     if out:
