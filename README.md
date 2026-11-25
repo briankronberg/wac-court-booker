@@ -2,7 +2,7 @@
 
 Books tennis courts at WAC Hartland the moment each slot becomes bookable, 169 hours before it starts. You set up your bookings once in a simple menu, and Windows runs each one in the background at the right time.
 
-Windows only for now. [DESIGN.md](DESIGN.md) explains the decisions behind it.
+For Windows 10 and 11.
 
 ## Install
 
@@ -16,7 +16,7 @@ Windows only for now. [DESIGN.md](DESIGN.md) explains the decisions behind it.
    - offer a test booking you can cancel straight after;
    - add your first booking.
 
-Run setup.cmd again any time to update the app. Your bookings and logins are kept. Installing on a new PC for the first time? Follow [docs/second-pc-test.md](docs/second-pc-test.md).
+Run setup.cmd again any time to update the app. Your bookings and logins are kept.
 
 ## Day to day
 
@@ -75,7 +75,7 @@ Menu 7 → Browser, or `browser:` in bookings.yaml:
 | `edge` | Microsoft Edge on this PC, with its own separate profile |
 | `chrome` | Google Chrome on this PC, with its own separate profile |
 
-For Edge and Chrome, `show_window: true` shows the window, which helps when watching a test. Your everyday browser profile, bookmarks and saved passwords are never touched. If the app's own browser won't start on a booking morning, the run tries Edge.
+For Edge and Chrome, `show_window: true` shows the window, which is handy for watching a booking run. Your everyday browser profile, bookmarks and saved passwords are never touched. If the app's own browser won't start on a booking morning, the run tries Edge.
 
 ## Where things are
 
@@ -100,25 +100,3 @@ The Start-menu entry opens the menu. The same program has commands for checking 
 ```
 
 `check` lists bookings and next windows. `test-login`, `buddies`, `dry-run --booking NAME` and `clock` are read-only. `tasks` and `rebuild-tasks` show or rebuild the scheduled tasks. `selftest` checks the install. `run --booking NAME` is what the scheduled task runs.
-
-## Development
-
-```powershell
-pwsh -NoProfile -File setup.ps1 -Dev -NoWizard     # editable install into %LOCALAPPDATA%\WAC Court Booker
-& "$env:LOCALAPPDATA\WAC Court Booker\venv\Scripts\python.exe" -m pip install pytest
-& "$env:LOCALAPPDATA\WAC Court Booker\venv\Scripts\python.exe" -m pytest
-```
-
-The tests run offline: the booking engine is tested against a fake club site and a fake clock (`tests/fakes.py`).
-
-To test a clean install, use Windows Sandbox (the Windows feature must be on):
-
-```powershell
-pwsh -NoProfile -File tests\sandbox\run-sandbox-test.ps1
-```
-
-It zips the working tree the way a release is laid out, then starts a throwaway sandbox that has no PowerShell 7, Python or winget. There it runs `setup.cmd -NoWizard` in a visible window, followed by the self-test (browser and toast), `check`, `rebuild-tasks`, a run started by Task Scheduler, the menu, a second setup and the unit tests. It never signs in to the club: the sandbox's only login has no password. Results go to `.sandbox\<time>\out\`, with a summary in `report.json`. `-Zip <file>` tests a downloaded release instead, and `-KeepOpen` leaves the sandbox open afterwards. `-Reuse` updates a sandbox that a `-KeepOpen` or `-HandsOn` run left open: it installs the new build with `setup.cmd`, then reruns the checks (including the signed-in ones if a login was typed in). That takes about a minute instead of 11, but it doesn't retest a first install, so do a clean run before a release. `-HandsOn` runs the setup wizard so a person can type a club login into the sandbox when it prints READY; it then also runs the signed-in checks, all read-only (sign-in, buddy list, clock, and a dry run on a paused booking). The password stays in the sandbox's own Credential Manager and is gone when the sandbox closes. The logs in `out\` hold names, so keep them private. The test harness may only do what a user would do: anything a clean PC needs belongs in setup. Set `WACB_HOME` to use a scratch folder and `WACB_TASK_FOLDER` (for example `\WAC Court Booker\Test\`) to keep test tasks apart from real ones.
-
-Release: merge to `main`, then `git archive --format=zip --prefix=wac-court-booker-<version>/ -o dist\wac-court-booker-<version>.zip v<version>` on the tag, and attach the zip to a GitHub release (`gh release create`).
-
-Rules: never run a real booking or cancel without the account holder's OK for that run; never print or log passwords. Keep `pyproject.toml` and `wacbooker/__init__.py` on the same version and record changes in [CHANGELOG.md](CHANGELOG.md).

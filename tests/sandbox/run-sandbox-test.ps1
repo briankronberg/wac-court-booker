@@ -93,7 +93,13 @@ if ($Zip) {
     $stage = Join-Path $run "stage\$name"
     Push-Location $repo
     try {
-        $files = git ls-files --cached --others --exclude-standard | Where-Object { Test-Path $_ -PathType Leaf }
+        # Every tracked or new file, minus what .gitattributes keeps out of a release
+        # (export-ignore), so this zip has exactly what a release zip has.
+        $all = @(git ls-files --cached --others --exclude-standard | Where-Object { Test-Path $_ -PathType Leaf })
+        # Paths as arguments: piped into --stdin, PowerShell adds a CR to each and none match.
+        $ignored = @(git check-attr export-ignore -- @all | Where-Object { $_ -match ': export-ignore: set$' } |
+            ForEach-Object { $_ -replace ': export-ignore: set$', '' })
+        $files = $all | Where-Object { $ignored -notcontains $_ }
         foreach ($f in $files) {
             $dest = Join-Path $stage $f
             New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
@@ -108,6 +114,14 @@ Remove-Item (Join-Path $inDir 'interactive.txt'), (Join-Path $inDir 'update.txt'
 if ($HandsOn) { Set-Content (Join-Path $inDir 'interactive.txt') 'hands-on' }
 if ($Reuse) { Set-Content (Join-Path $inDir 'update.txt') "update-$stamp" }
 foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py', 'cleanup_old.py') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
+# The unit tests aren't in a release zip, so they go in separately (with pyproject.toml,
+# which the version test reads from the folder above tests).
+$devDir = Join-Path $inDir 'dev'
+Remove-Item -Recurse -Force $devDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $devDir | Out-Null
+Copy-Item (Join-Path $repo 'tests') $devDir -Recurse -Exclude 'sandbox'
+Remove-Item -Recurse -Force (Join-Path $devDir 'tests\sandbox') -ErrorAction SilentlyContinue
+Copy-Item (Join-Path $repo 'pyproject.toml') $devDir
 
 $config = Join-Path $run 'test.wsb'
 @"

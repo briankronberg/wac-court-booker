@@ -236,8 +236,11 @@ try {
 
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null
-    Push-Location $src
+    # The tests aren't in the release zip; the host puts them (and pyproject.toml) in in\dev.
+    Push-Location (Join-Path $in 'dev')
+    $env:PYTHONDONTWRITEBYTECODE = '1'   # in\ is read-only here
     $r = Run-Native $vpy @('-m', 'pytest', '-q', '-p', 'no:cacheprovider', "--junitxml=$(Join-Path $out 'pytest.xml')", 'tests') 'pytest.txt'
+    Remove-Item Env:\PYTHONDONTWRITEBYTECODE
     Pop-Location
     $summary = ($r.text -split "`n" | Where-Object { $_ -match 'passed|failed|error' } | Select-Object -Last 1)
     Rec 'unit tests' ($r.code -eq 0) "$summary"
