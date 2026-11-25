@@ -241,6 +241,15 @@ try {
     $target = if (Test-Path $deskLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk).TargetPath } else { '' }
     Rec 'desktop shortcut' ($target -eq $exe) "target=$target"
 
+    # 8b. The desktop-shortcut question, answered with keypresses in setup's own console
+    #     window: y, then remembered; n, then remembered. Its own process, because it
+    #     attaches to other consoles. Restores the shortcut and saved answer afterwards.
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $in 'answer_prompt.ps1') -Src $src -Out $out | Out-Null
+    $kt = Get-Content (Join-Path $out 'keyboard-test.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+    if ($kt) { foreach ($c in @($kt)) { Rec "shortcut question: $($c.name)" $c.ok $c.detail } }
+    else { Rec 'shortcut question' $false 'the keyboard test wrote no results (see keyboard-test.txt)' }
+
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null
     # The tests aren't in the release zip; the host puts them (and pyproject.toml) in in\dev.
