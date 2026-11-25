@@ -5,6 +5,7 @@
 - **Fix: reading family members found nobody.** Each member row on the participants page starts with a cell that holds only a checkbox. The reader took that empty cell as the name and skipped every row. It now reads the cells that have text, on rows with a member checkbox. If it still finds nothing, it logs the table's layout.
 - **No booking name to type.** The name is made from the booking, for example "Tue 6:00 PM singles with Andrea" or "Sat 12/19 8:30 AM doubles with Pat, Sam, Kim", with " (2)" added if another booking already has it. When you edit a booking, a made-up name follows the changes; a name typed by hand in bookings.yaml stays.
 - **Updating while the app is open:** setup used to fail with a pip "file in use" error. It now says to close the menu window, waits up to 5 minutes, and carries on by itself once it's closed. It never stops a running booking.
+- **Sandbox test:** the test login ("test-no-password") and test bookings now live in a scratch app folder with their own task folder (`\WAC Court Booker\Test\`), so they never appear in the person's menu. A new check confirms the person's own bookings.yaml and tasks are untouched. Older runs' test entries are removed from it.
 - **Singles is the default,** and "s" or "d" is enough as an answer.
 
 ## 0.1.3

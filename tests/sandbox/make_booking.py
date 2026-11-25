@@ -1,17 +1,33 @@
-"""Adds test bookings to bookings.yaml inside Windows Sandbox, keeping whatever is there.
+"""Writes the sandbox test's own bookings.yaml in a SCRATCH app folder (WACB_HOME), never
+the one the person uses, so their menu only shows logins and bookings they added.
 
-- Login 'sandbox' with no saved password, and booking 'Sandbox check' on it: a one-off
+- Login 'test-no-password' (no saved password), booking 'Sandbox check' on it: a one-off
   whose window opens in about 70-100 minutes, so a scheduled run started now counts as
   due and stops at "no password" before it ever opens the club site.
-- With --dry-login NICK (hands-on mode, after the account holder signed in): booking
-  'Sandbox dry run' on that login, same slot, PAUSED (its task is disabled), used only
-  for the read-only dry run.
+- With --dry-login NICK --dry-user USERNAME (after the person typed a login into the
+  wizard): the same login in the scratch config (its password is found in Credential
+  Manager by username), and booking 'Sandbox dry run' on it, PAUSED (its task is
+  disabled), used only for the read-only dry run.
 
-Run with the app's venv Python."""
+Run with the app's venv Python, with WACB_HOME set to the scratch folder."""
+import os
 import sys
 from datetime import timedelta
+from pathlib import Path
 
-from wacbooker import clubtime, config
+from wacbooker import clubtime, config, paths
+
+home = os.environ.get("WACB_HOME")
+real = Path(os.environ.get("LOCALAPPDATA", "")) / "WAC Court Booker"
+if not home or Path(home).resolve() == real.resolve():
+    sys.exit("make_booking.py writes only to a scratch folder: set WACB_HOME to one.")
+
+
+def arg(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+
+
+dry_login, dry_user = arg("--dry-login"), arg("--dry-user")
 
 now = clubtime.now_central()
 t = now + clubtime.OPEN_LEAD + timedelta(minutes=70)
@@ -21,29 +37,26 @@ if mins >= 24 * 60:
     day += timedelta(days=1)
     mins -= 24 * 60
 
-dry_login = sys.argv[sys.argv.index("--dry-login") + 1] if "--dry-login" in sys.argv else None
-
+paths.config_file().unlink(missing_ok=True)  # start from the template every time
 doc, _ = config.load()
-logins = [x for x in (doc.get("logins") or []) if x.get("nickname") != "sandbox"]
-logins.append({"nickname": "sandbox", "username": "sandbox-test"})
-doc["logins"] = logins
+
 
 def slot() -> dict:  # fresh lists each time, so the YAML has no shared anchors
     return {"play": "singles", "partners": ["Test Partner"], "date": day.replace(),
             "time": clubtime.fmt_time(mins), "length": 30, "courts": [2, "any"]}
 
 
-bookings = [x for x in (doc.get("bookings") or [])
-            if x.get("name") not in ("Sandbox check", "Sandbox dry run")]
-bookings.append({"name": "Sandbox check", "login": "sandbox", **slot()})
-if dry_login:
+logins = [{"nickname": "test-no-password", "username": "test-no-password"}]
+bookings = [{"name": "Sandbox check", "login": "test-no-password", **slot()}]
+if dry_login and dry_user:
+    logins.append({"nickname": dry_login, "username": dry_user})
     bookings.append({"name": "Sandbox dry run", "login": dry_login, **slot(), "active": False})
-doc["bookings"] = bookings
+doc["logins"], doc["bookings"] = logins, bookings
 config.save(doc)
 
 _, cfg = config.load()
 if not cfg.ok:
-    print("bookings.yaml has problems: " + "; ".join(cfg.errors))
+    print("test bookings.yaml has problems: " + "; ".join(cfg.errors))
     sys.exit(1)
 print(f"Sandbox check: {day.isoformat()} {clubtime.fmt_time(mins)}"
-      + (f"; Sandbox dry run (paused) on login {dry_login}" if dry_login else ""))
+      + (f"; Sandbox dry run (paused) on login {dry_login}" if dry_login and dry_user else ""))
