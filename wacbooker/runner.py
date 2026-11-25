@@ -342,6 +342,9 @@ async def test_booking(cfg: Config, login: Login, play: str, partners: list[str]
         say("  The cancel went through, but I couldn't confirm it's gone. Check the club site.")
         return "unsure"
     except (SiteError, LookupError) as e:
+        if not isinstance(e, SiteError):
+            import traceback
+            log("unexpected error:\n" + traceback.format_exc())
         say(f"  Test booking stopped: {e}. Check your reservations on the club site.")
         results.record("test", "test booking", "unsure", str(e))
         return "unsure"

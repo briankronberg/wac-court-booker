@@ -29,7 +29,17 @@ from . import clubtime, paths
 from .engine import (CONFIRMED, NO_POST, NOT_READY, OFFPAGE, REJECTED, UNKNOWN, Attempt, SiteError,
                      Slot)
 
-BASE = "https://hnd-p-ols.spectrumng.net/LCRAC"
+
+def why(e: BaseException, n: int = 120) -> str:
+    """First line of an error, never empty: a timeout's message is often blank, and
+    an empty message once broke the error handling itself ("list index out of range")."""
+    for line in str(e).splitlines():
+        if line.strip():
+            return line.strip()[:n]
+    return "timed out" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else type(e).__name__
+
+
+BASE ="https://hnd-p-ols.spectrumng.net/LCRAC"
 LOGIN_URL = BASE + "/Login.aspx"
 HOME_URL = BASE + "/Home.aspx"
 BUDDY_URL = BASE + "/Members/Buddy/MemberBuddy.aspx?isKiosk=False&pname=Account%20Information@My%20Buddy%20List&pid=ACI,ABD"
@@ -241,7 +251,7 @@ class ClubSite:
                 self.page = self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page()
         except Exception as e:
             await self.close()
-            raise SiteError(f"the {self.browser} browser didn't start: {str(e).splitlines()[0][:160]}") from e
+            raise SiteError(f"the {self.browser} browser didn't start: {why(e, 160)}") from e
         self.page.set_default_timeout(30_000)
         self.page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
         self.page.on("request", self._on_request)
@@ -278,13 +288,13 @@ class ClubSite:
                 return await asyncio.wait_for(self.page.evaluate(expr), timeout)
             return await asyncio.wait_for(self.page.evaluate(expr, arg), timeout)
         except Exception as e:  # noqa: BLE001 -- navigation in flight, page gone, timeout
-            raise SiteError(f"page script failed: {str(e).splitlines()[0][:120]}") from e
+            raise SiteError(f"page script failed: {why(e, 120)}") from e
 
     async def goto(self, url: str, timeout: float = 90) -> None:
         try:
             await self.page.goto(url, wait_until="load", timeout=timeout * 1000)
         except Exception as e:  # noqa: BLE001
-            raise SiteError(f"page didn't load: {str(e).splitlines()[0][:120]}") from e
+            raise SiteError(f"page didn't load: {why(e, 120)}") from e
         try:
             await self.page.evaluate(SHIM)  # the site's own scripts replace window.confirm
         except Exception:  # noqa: BLE001
@@ -331,7 +341,7 @@ class ClubSite:
             await self.page.fill("#ctl00_pageContentHolder_loginControl_Password", self._secret)
             await self.page.click("#ctl00_pageContentHolder_loginControl_Login", no_wait_after=True)
         except Exception as e:  # noqa: BLE001
-            raise SiteError(f"couldn't fill in the sign-in form: {str(e).splitlines()[0][:100]}") from e
+            raise SiteError(f"couldn't fill in the sign-in form: {why(e, 100)}") from e
         end = time.time() + 120
         while time.time() < end:
             await asyncio.sleep(1)
@@ -479,8 +489,11 @@ class ClubSite:
         res = None
         end = time.time() + 120
         while time.time() < end:
-            res = await self.js(JS_DIALOG, label)
-            if res != "waiting":
+            try:
+                res = await self.js(JS_DIALOG, label)
+            except SiteError as e:  # a slow moment or a page change in flight; look again
+                res = f"waiting ({e})"
+            if not str(res).startswith("waiting"):
                 break
             await asyncio.sleep(0.5)
         if res != "continued":
