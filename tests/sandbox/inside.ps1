@@ -14,6 +14,16 @@ $expected = (Get-Content (Join-Path $in 'expected-version.txt') -Raw).Trim()
 # Hands-on mode: a person answers the setup wizard (types the club login), then the
 # signed-in checks run. They're all read-only: sign-in, buddy list, clock and a dry run.
 $interactive = Test-Path (Join-Path $in 'interactive.txt')
+# Update mode (-Reuse on the host): this sandbox already ran a test and is still open.
+# Install the new zip over it with setup.cmd, as a user updating would, then check again.
+# Results go to a subfolder named in update.txt.
+$updateFile = Join-Path $in 'update.txt'
+$update = Test-Path $updateFile
+if ($update) {
+    $interactive = $false
+    $out = Join-Path $out ((Get-Content $updateFile -Raw).Trim())
+    New-Item -ItemType Directory -Force $out | Out-Null
+}
 $results = New-Object System.Collections.ArrayList
 # Windows PowerShell 5.1 otherwise puts a byte-order mark in front of text piped to a
 # program, so the menu would read "﻿1" instead of the typed "1".
@@ -82,12 +92,16 @@ try {
         py     = [bool](Get-Command py -ErrorAction SilentlyContinue)
         python = [bool](Get-Command python -ErrorAction SilentlyContinue)
     }
-    Rec 'clean PC' (-not ($has.pwsh -or $has.py)) (($has.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' ')
+    $hasText = ($has.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ' '
+    if ($update) { Log "update of an earlier install ($hasText)" }
+    else { Rec 'clean PC' (-not ($has.pwsh -or $has.py)) $hasText }
 
     # 1. Download and unzip, with the "from the internet" mark Explorer leaves on each file.
+    #    An update unzips into a fresh folder, like a new download would.
     $dl = Join-Path $env:USERPROFILE 'Downloads'
+    if ($update) { $dl = Join-Path $dl ("update-" + (Get-Date -Format yyyyMMdd-HHmmss)) }
     New-Item -ItemType Directory -Force $dl | Out-Null
-    $zip = Get-ChildItem $in -Filter 'wac-court-booker-*.zip' | Select-Object -First 1
+    $zip = Get-ChildItem $in -Filter 'wac-court-booker-*.zip' | Sort-Object LastWriteTime | Select-Object -Last 1
     Copy-Item $zip.FullName $dl
     Expand-Archive (Join-Path $dl $zip.Name) -DestinationPath $dl -Force
     $src = Join-Path $dl ([IO.Path]::GetFileNameWithoutExtension($zip.Name))
@@ -103,7 +117,8 @@ try {
     $mins = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
     Copy-Item (Join-Path $app 'logs\setup.log') (Join-Path $out 'setup.log') -ErrorAction SilentlyContinue
     $console = Get-Content (Join-Path $out 'setup-console.txt') -Raw -ErrorAction SilentlyContinue
-    Rec 'setup.cmd (first install)' ($code -eq 0 -and $console -match 'Installed WAC Court Booker') "exit $code after $mins min"
+    $what = if ($update) { 'setup.cmd (update)' } else { 'setup.cmd (first install)' }
+    Rec $what ($code -eq 0 -and $console -match 'Installed WAC Court Booker') "exit $code after $mins min"
 
     $privatePwsh = Join-Path $app 'pwsh\pwsh.exe'
     $machinePwsh = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
@@ -126,12 +141,15 @@ try {
     Rec 'selftest: toast' ($st.toast_shown -eq $true) "toast_shown=$($st.toast_shown)"
     Rec 'selftest: app folder' ($st.home_writable -eq $true -and $st.log_file -eq $true) "home_writable=$($st.home_writable) log_file=$($st.log_file) wake_timers=$($st.wake_timers)"
 
-    # 4b. Hands-on mode: the login the person added in the wizard, and read-only checks with it.
+    # 4b. Signed-in checks, read-only, with the login a person typed into the wizard: in
+    #     hands-on mode, or in update mode when an earlier hands-on run left one here.
     $nick = $null
-    if ($interactive) {
-        $nick = "$(& $vpy -c "from wacbooker import config; d, c = config.load(); print(c.logins[0].nickname if c.logins else '')")".Trim()
+    $firstLogin = "$(& $vpy -c "from wacbooker import config; d, c = config.load(); print(next((x.nickname for x in c.logins if x.nickname != 'sandbox'), ''))")".Trim()
+    if ($update -and $firstLogin -and $st.passwords_reachable.$firstLogin -eq $true) { $nick = $firstLogin }
+    if ($interactive -or $nick) {
+        $nick = $firstLogin
         $reach = if ($nick) { $st.passwords_reachable.$nick } else { $false }
-        Rec 'wizard: login saved' ($nick -and $reach -eq $true) "login '$nick', password in Credential Manager=$reach"
+        Rec 'login saved' ($nick -and $reach -eq $true) "login '$nick', password in Credential Manager=$reach"
         if ($nick) {
             $r = Run-Native $exe @('test-login', '--login', $nick) 'test-login.txt'
             Rec 'test-login (read-only)' ($r.code -eq 0) (($r.text -split "`n" | Where-Object { $_ -match 'Signed in|fail|error|couldn' } | Select-Object -First 1) -replace '\(\d+\)', '')

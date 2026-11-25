@@ -143,6 +143,25 @@ class App:
     def buddies(self, nickname: str) -> list[str]:
         return (runner.load_buddies().get(nickname) or {}).get("names") or []
 
+    def offer_family(self, login: Login) -> list[str] | None:
+        """Ask, then read the login's family members (a few seconds with a court in the cart)."""
+        say("  Family members on your club account aren't on the buddy list. The club site shows them\n"
+            "  only on the page where you choose who's playing, which opens once a court is in your\n"
+            "  cart. To read them, the app puts a quiet 30-minute court in your cart for a few seconds,\n"
+            "  reads the names, then presses Back, which empties the cart. Nothing is booked.")
+        if not yes("  Read your family members now?", True):
+            say("  Skipped. A test booking also reads them, or use menu 7 later.")
+            return None
+        fam = asyncio.run(runner.read_family(self.cfg, login, say))
+        if fam is not None:
+            say(f"  Family members: {', '.join(fam) if fam else 'none on this account'}.")
+        return fam
+
+    def read_family(self) -> None:
+        login = self.pick_login("Whose family members?")
+        if login:
+            self.offer_family(login)
+
     # ------------------------------------------------------------ 1 show
     def show(self) -> None:
         if not self.explain_problems():
@@ -186,12 +205,19 @@ class App:
 
     def pick_partners(self, nickname: str, play: str, current: list[str]) -> list[str]:
         need = config.PARTNERS_FOR[play]
-        names = self.buddies(nickname)
         if current and len(current) == need and yes(f"Keep partners {', '.join(current)}?"):
             return current
         login = self.cfg.login(nickname)
-        if not names and login and yes("Read your buddy list from the club site first, to pick partners by name?"):
-            names = asyncio.run(runner.buddy_list(self.cfg, login, say)) or []
+        buddies = self.buddies(nickname)
+        if not buddies and login and yes("Read your buddy list from the club site first, to pick partners by name?"):
+            buddies = asyncio.run(runner.buddy_list(self.cfg, login, say)) or []
+        family = runner.load_family(nickname)
+        if family is None and login and buddies:
+            family = self.offer_family(login)
+        family = family or []
+        # Family members first, then buddies (a family member who's also a buddy shows once).
+        names = family + [n for n in buddies if n.lower() not in {f.lower() for f in family}]
+        labels = {f"{n}  (family)" if n in family else n: n for n in names}
         if not names:
             say("I don't have this login's buddy list yet (menu 7 can read it). Type names exactly as "
                 "they appear in your buddy list on the club site.")
@@ -199,8 +225,9 @@ class App:
         if names and picker.available():
             while len(out) < need:
                 label = f"Partner {len(out) + 1} of {need}" + (f" (picked: {', '.join(out)})" if out else "")
-                got = picker.pick(label, [n for n in names if n not in out],
-                                  "Family members on your club account can be partners too: choose the last row.")
+                got = picker.pick(label, [lab for lab, n in labels.items() if n not in out],
+                                  "Not listed? Choose the last row and type their full name.")
+                got = labels.get(got, got)
                 if got is None:  # Esc: take back the last pick (or keep the old partners)
                     if out:
                         out.pop()
@@ -226,8 +253,8 @@ class App:
             hits = [n for n in names if q.lower() in n.lower() and n not in out]
             if not hits:
                 typed = " ".join(q.split())
-                say("  No buddy matches that. Family members on your club account can be partners "
-                    "without being on the buddy list; type their full name as the club site shows it.")
+                say("  Nobody on your family or buddy list matches that. If they're on your club account, "
+                    "type their full name as the club site shows it.")
                 if len(typed.split()) >= 2 and yes(f"  Use '{typed}' anyway?", False):
                     out.append(typed)
                 continue
@@ -360,15 +387,16 @@ class App:
     # ------------------------------------------------------------ 7 logins
     def logins(self) -> None:
         while True:
-            opts = ["Add a login", "Test a login", "Read a login's buddy list", "Remove a login",
+            opts = ["Add a login", "Test a login", "Read a login's buddy list", "Read a login's family members",
+                    "Remove a login",
                     f"Browser (now: {self.cfg.browser}{', window shown' if self.cfg.show_window else ''})",
                     f"Run while signed out (now: {'yes' if self.cfg.run_signed_out else 'no'})",
                     "Rebuild scheduled tasks", f"Wake timers (now: {self._wake_text()})"]
             i = choose("\nLogins and settings", opts)
             if i is None:
                 return
-            [self.add_login, self.test_login, self.read_buddies, self.remove_login, self.set_browser,
-             self.set_signed_out, self.rebuild_tasks, self.wake][i]()
+            [self.add_login, self.test_login, self.read_buddies, self.read_family, self.remove_login,
+             self.set_browser, self.set_signed_out, self.rebuild_tasks, self.wake][i]()
 
     def _wake_text(self) -> str:
         on = scheduler.wake_timers_on()
@@ -406,6 +434,7 @@ class App:
             names = asyncio.run(runner.buddy_list(self.cfg, login, say))
             if names is not None:
                 say(f"  {len(names)} buddies saved for picking partners.")
+            self.offer_family(login)
         else:
             say("Check the username and password, then add the login again with the same nickname.")
         return login

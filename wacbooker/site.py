@@ -98,6 +98,27 @@ JS_DIALOG = r"""(court) => {
     }
   } return 'waiting'; }"""
 
+# The participants page's member table: one row per person, cells Name, Relationship
+# (Main = the signed-in member, Spouse/Child/... = family on the account, Buddy).
+JS_PARTICIPANTS = r"""() => { const g = document.querySelector('table[id$="ctrlMemberBuddy_gridViewMembers"]');
+  if (!g) return null;
+  return Array.from(g.querySelectorAll('tr')).map(tr => Array.from(tr.querySelectorAll('td'))
+    .map(td => (td.innerText || '').replace(/\s+/g, ' ').trim())).filter(c => c.length >= 2 && c[0]); }"""
+
+
+def family_from(cells: list[list[str]], me: str = "") -> list[str]:
+    """Family members on the account: participant rows whose relationship isn't
+    Main (the member) or Buddy. Keeps the page's order."""
+    out = []
+    for c in cells or []:
+        name, rel = " ".join(c[0].split()), c[1].strip().lower()
+        if not name or rel in ("main", "buddy", "") or name.lower() == (me or "").lower():
+            continue
+        if name not in out:
+            out.append(name)
+    return out
+
+
 JS_FAMILY_ROWS = r"""() => { const out = [];
   for (const tr of document.querySelectorAll('tr')) {
     const cb = tr.querySelector('input[id*="chkMember" i]');
@@ -203,6 +224,7 @@ class ClubSite:
         self.show_window = show_window
         self._log = log or (lambda m: None)
         self.member_name = ""
+        self.family: list[str] | None = None  # set once a participants page was read
         self.member_number = ""
         self.pw = None
         self.ctx = None
@@ -509,6 +531,20 @@ class ClubSite:
         self.staged = slot
         self.last_fresh = time.time()
         self.log(f"staged {slot.describe()}")
+        if self.family is None:  # once per session: a re-stage near W must stay fast
+            await self._note_family()
+
+    async def _note_family(self, wait: float = 5) -> None:
+        """Remember the family members the participants page lists (the only page
+        on the club site that shows them). Never fails the caller."""
+        try:
+            cells = await self.wait_for(JS_PARTICIPANTS, wait, 0.5)
+            fam = family_from(cells or [], self.member_name)
+            if cells:
+                self.family = fam
+                self.log(f"family on the account: {len(fam)}")
+        except Exception as e:  # noqa: BLE001
+            self.log(f"couldn't read family members: {why(e)}")
 
     async def _family_loaded(self, slot: Slot, timeout: float) -> bool:
         return bool(await self.wait_for(

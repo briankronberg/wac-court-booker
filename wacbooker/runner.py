@@ -158,6 +158,7 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
             await site.release()
         return res
     finally:
+        keep_family(login, site)
         await site.close()
 
 
@@ -190,11 +191,76 @@ def load_buddies() -> dict:
         return {}
 
 
-def save_buddies(nickname: str, names: list[str]) -> None:
+def save_buddies(nickname: str, names: list[str] | None = None, family: list[str] | None = None) -> None:
+    """Store a login's buddy names and/or family members; what isn't given is kept."""
     data = load_buddies()
-    data[nickname] = {"updated": datetime.now().isoformat(timespec="seconds"), "names": names}
+    entry = dict(data.get(nickname) or {})
+    now = datetime.now().isoformat(timespec="seconds")
+    if names is not None:
+        entry["names"], entry["updated"] = names, now
+    if family is not None:
+        entry["family"], entry["family_updated"] = family, now
+    data[nickname] = entry
     paths.ensure()
     paths.buddies_file().write_text(json.dumps(data, indent=1), encoding="utf-8")
+
+
+def load_family(nickname: str) -> list[str] | None:
+    """Family members seen on the participants page, or None if never read."""
+    return (load_buddies().get(nickname) or {}).get("family")
+
+
+def keep_family(login: Login, site) -> None:
+    """Save the family members a site session saw on a participants page, if any."""
+    fam = getattr(site, "family", None)
+    if fam is not None:
+        try:
+            save_buddies(login.nickname, family=fam)
+        except OSError:
+            pass
+
+
+async def read_family(cfg: Config, login: Login, say: Say) -> list[str] | None:
+    """Family members are only listed on the participants page, which opens once a
+    court is in the cart. Put a quiet 30-minute slot in the cart, read the list,
+    press Back (which empties the cart again). Never presses Continue to Cart."""
+    log = _log(f"family {login.nickname}")
+    try:
+        site = await start_site(cfg, login, log)
+    except SiteError as e:
+        say(f"  The browser didn't start: {e}")
+        return None
+    try:
+        await site.login()
+        now = clubtime.now_central()
+        slot = None
+        for days in range(2, 7):
+            d = (now + timedelta(days=days)).strftime("%m/%d/%Y")
+            slot = pick_quiet_slot(await site.list_open(d, 30, "singles"), ["any"], now)
+            if slot:
+                break
+        if not slot:
+            say("  No quiet court is open in the next few days to open the participants page with. Try later.")
+            return None
+        log(f"opening the participants page with {slot.describe()} (not booking it)")
+        await site.stage(slot)
+        if site.family is None:
+            await site._note_family(15)
+        try:
+            await site.back_out()
+            log("pressed Back; the cart is empty again")
+        except SiteError as e:
+            say(f"  Couldn't press Back ({e}). The court leaves your cart by itself after a few minutes.")
+        if site.family is None:
+            say("  The participants page didn't show its member list. Try again later.")
+            return None
+        save_buddies(login.nickname, family=site.family)
+        return site.family
+    except (SiteError, LookupError) as e:
+        say(f"  Couldn't read family members: {e}")
+        return None
+    finally:
+        await site.close()
 
 
 async def buddy_list(cfg: Config, login: Login, say: Say) -> list[str] | None:
@@ -356,4 +422,5 @@ async def test_booking(cfg: Config, login: Login, play: str, partners: list[str]
         results.record("test", "test booking", "unsure", f"{type(e).__name__}: {e}")
         return "unsure"
     finally:
+        keep_family(login, site)
         await site.close()
