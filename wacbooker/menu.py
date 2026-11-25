@@ -5,7 +5,8 @@ import asyncio
 import getpass
 from datetime import date, datetime, timedelta
 
-from . import APP_NAME, __version__, clock, clubtime, config, creds, notify, paths, results, runner, scheduler
+from . import (APP_NAME, __version__, clock, clubtime, config, creds, notify, paths, picker, results, runner,
+               scheduler)
 from .config import Booking, Login
 
 MENU = f"""
@@ -22,6 +23,14 @@ MENU = f"""
 9  Show recent results
 0  Quit
 """
+
+
+SIGNED_OUT_HELP = (
+    "  The scheduled tasks can run two ways. One needs you to be signed in to this computer (the\n"
+    "  screen can be locked). The other runs even when you're signed out, as long as the computer\n"
+    "  is on. For that one, the scheduled task has to store your Windows user name and password\n"
+    "  (Windows keeps them, not this app). If that's OK, choose Yes for \"Run while signed out\".\n"
+    "  Some work PCs don't allow it; then bookings run while you're signed in.")
 
 
 def say(msg: str = "") -> None:
@@ -187,6 +196,26 @@ class App:
             say("I don't have this login's buddy list yet (menu 7 can read it). Type names exactly as "
                 "they appear in your buddy list on the club site.")
         out: list[str] = []
+        if names and picker.available():
+            while len(out) < need:
+                label = f"Partner {len(out) + 1} of {need}" + (f" (picked: {', '.join(out)})" if out else "")
+                got = picker.pick(label, [n for n in names if n not in out],
+                                  "Family members on your club account can be partners too: choose the last row.")
+                if got is None:  # Esc: take back the last pick (or keep the old partners)
+                    if out:
+                        out.pop()
+                    elif len(current) == need:
+                        return current
+                elif got == picker.OTHER:
+                    typed = " ".join(ask("  Full name, exactly as the club site shows it").split())
+                    if len(typed.split()) >= 2 and typed not in out:
+                        out.append(typed)
+                    elif typed:
+                        say("  Please type a first and last name.")
+                else:
+                    out.append(got)
+                    say(f"  Partner {len(out)}: {got}")
+            return out
         while len(out) < need:
             q = ask(f"Partner {len(out) + 1} of {need} (type part of a name)")
             if not q:
@@ -420,7 +449,8 @@ class App:
         self.commit(f"browser set to {br}")
 
     def set_signed_out(self) -> None:
-        on = yes("Run bookings even when nobody is signed in to Windows?", self.cfg.run_signed_out)
+        say(SIGNED_OUT_HELP)
+        on = yes("Run while signed out?", self.cfg.run_signed_out)
         config.set_setting(self.doc, "run_signed_out", on)
         self.windows_password = None
         self.commit(f"run while signed out: {'yes' if on else 'no'}")
@@ -521,9 +551,8 @@ class App:
             login = self.add_login()
         say("\nStep 2: check the PC clock.")
         say("  " + clock.report()[1])
-        say("\nStep 3: run even when you're signed out?")
-        say("  If yes, Windows will ask for your Windows password to store with the scheduled tasks. "
-            "Work PCs often don't allow this; then bookings run while you're signed in (the screen can be locked).")
+        say("\nStep 3: run while signed out?")
+        say(SIGNED_OUT_HELP)
         on = yes("  Run while signed out?", False)
         config.set_setting(self.doc, "run_signed_out", on)
         self.commit(f"run while signed out: {'yes' if on else 'no'}")

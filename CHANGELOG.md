@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- **Partner picker:** partners are chosen from the buddy list with the arrow keys. Typing narrows the list, Enter chooses and Esc takes back the last pick. The last row, "Someone not on this list", lets you type a family member's full name. When input isn't a console (piped), partners are typed as before.
+- **"Run while signed out?":** the question now explains both ways a scheduled task can run, and that the signed-out way stores your Windows user name and password with the task. The wizard and menu 7 use the same wording.
+- **Test booking log:** everything the test booking shows, and any unexpected error with its details, now also goes to the log and to results. An error no longer stops the wizard.
+
 ## 0.1.2
 
 - Setup works on a PC without winget, such as Windows Sandbox or some managed or older PCs:

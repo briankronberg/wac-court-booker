@@ -272,6 +272,13 @@ async def test_booking(cfg: Config, login: Login, play: str, partners: list[str]
     """Book a quiet 30-minute slot now (more than 24 h away), then offer to cancel it.
     Returns 'cancelled', 'kept', 'not_booked' or 'unsure'."""
     log = _log("test booking")
+    shown = say
+
+    def say(msg: str) -> None:  # everything the person sees goes in the log too
+        shown(msg)
+        log(msg.strip())
+
+    log(f"partners: {', '.join(partners) or '(none)'}; courts: {', '.join(map(str, courts))}")
     now = clubtime.now_central()
     try:
         site = await start_site(cfg, login, log)
@@ -336,6 +343,14 @@ async def test_booking(cfg: Config, login: Login, play: str, partners: list[str]
         return "unsure"
     except (SiteError, LookupError) as e:
         say(f"  Test booking stopped: {e}. Check your reservations on the club site.")
+        results.record("test", "test booking", "unsure", str(e))
+        return "unsure"
+    except Exception as e:  # noqa: BLE001 - never crash the wizard; keep the details
+        import traceback
+        log("unexpected error:\n" + traceback.format_exc())
+        say(f"  Test booking stopped by an unexpected error ({type(e).__name__}: {str(e)[:200]}). "
+            "Check your reservations on the club site; the log has the details.")
+        results.record("test", "test booking", "unsure", f"{type(e).__name__}: {e}")
         return "unsure"
     finally:
         await site.close()

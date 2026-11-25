@@ -40,7 +40,7 @@ On a booking day there's nothing to do. A toast tells you how it went, for examp
 
 ## What a booking can be
 
-- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site. Family members on your club account can be partners too; type their full name.
+- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site. In the menu, move through the list with the arrow keys (type a few letters to narrow it) and press Enter. Family members on your club account can be partners too: choose "Someone not on this list" and type their full name.
 - 30, 60 or 90 minutes, optionally falling back to shorter at the same start time.
 - A court preference list, such as `5, 4, 3, any`. `any` is optional and must come last.
 - Weekly on a day, or a one-off date, with skip dates.
