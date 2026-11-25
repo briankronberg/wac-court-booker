@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Setup works on a PC without winget, such as Windows Sandbox or some managed or older PCs:
+  - **PowerShell 7:** `setup.cmd` downloads PowerShell 7.7.0 into the app's own folder (no admin needed), checked against Microsoft's published SHA-256. The app looks there for PowerShell too.
+  - **Python:** setup installs the official Python 3.14.10 for the current user from python.org, checked by SHA-256 and by its Python Software Foundation signature.
+- The python.org install shows its progress window and installs only what the app needs (no docs, Tcl/Tk, headers or tests), so it no longer looks hung for 15 minutes.
+- `tests/sandbox/run-sandbox-test.ps1`: unattended clean-install test in Windows Sandbox. It never signs in to the club.
+
 ## 0.1.1 (ready for a second-PC test)
 
 - Setup installs standard Python 3.13 for the current user when none is found (the Python Install Manager is now the fallback). It also finds a per-user Python that isn't on PATH yet, rebuilds the app's environment if its Python was removed, and clears the "downloaded from the internet" mark on the unzipped files.

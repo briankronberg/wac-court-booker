@@ -3,7 +3,8 @@
   Installs WAC Court Booker for the current Windows user (run via setup.cmd).
 
 .DESCRIPTION
-  1. Finds Python 3.11+ (installs it with winget if missing).
+  1. Finds Python 3.11+. If it's missing, installs Python 3.13 with winget, or on a PC
+     without winget the official Python 3.14 installer from python.org (checked).
   2. Creates a private Python environment in %LOCALAPPDATA%\WAC Court Booker\venv
      and installs the app into it.
   3. Downloads the app's own Chromium (Playwright, headless shell).
@@ -59,6 +60,41 @@ function Find-Python {
     return $null
 }
 
+function Install-PythonFromPythonOrg {
+    # The official installer, for the current user only (no admin). Pinned and checked:
+    # the SHA-256 below is of the PSF-signed file, and the signature is checked too.
+    $version = '3.14.10'
+    $builds = @{
+        'amd64' = '92480239264744FE0386A1BD8275786FEFA126E3129E56A68E22B52C73329965'
+        'arm64' = '5B9547E4EDAE2F6FB2FBFEC5E26CF91B4EA191E3B07F7727D5A2C5C2CCA93ED3'
+    }
+    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+    $name = "python-$version-$arch.exe"
+    $exe = Join-Path $env:TEMP $name
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest "https://www.python.org/ftp/python/$version/$name" -OutFile $exe
+        if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $builds[$arch]) {
+            throw "the Python download didn't match its expected checksum"
+        }
+        $sig = Get-AuthenticodeSignature $exe
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Python Software Foundation') {
+            throw "the Python download isn't signed by the Python Software Foundation"
+        }
+        # /passive shows the installer's progress bar (it can take several minutes) but
+        # asks nothing. Only the parts the app needs: core, exe, lib (has venv and
+        # ensurepip) and the py launcher; no docs, Tcl/Tk, headers, tests or shortcuts.
+        Write-Host "Installing Python $version. A Python progress window shows while it works."
+        $p = Start-Process $exe -Wait -PassThru -ArgumentList @(
+            '/passive', 'InstallAllUsers=0', 'PrependPath=1', 'Include_launcher=1',
+            'InstallLauncherAllUsers=0', 'Include_doc=0', 'Include_tcltk=0', 'Include_dev=0',
+            'Include_test=0', 'Include_pip=0', 'Include_debug=0', 'Include_symbols=0',
+            'Shortcuts=0', 'AssociateFiles=0')
+        if ($p.ExitCode) { throw "the Python installer stopped with code $($p.ExitCode)" }
+    }
+    finally { Remove-Item $exe -ErrorAction SilentlyContinue }
+}
+
 function Update-PathFromRegistry {
     $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
                 [Environment]::GetEnvironmentVariable('Path', 'User') + ';' +
@@ -73,20 +109,18 @@ try {
 
     Step "Python"
     $py = Find-Python
-    if (-not $py) {
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            throw "Python isn't installed and this PC has no winget to install it. Install Python 3.13 from python.org, then run setup.cmd again."
-        }
+    $haveWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+    if (-not $py -and $haveWinget) {
         Write-Host "Python 3.11 or newer isn't installed. Installing Python 3.13 (this takes a minute)..."
         winget install --id Python.Python.3.13 -e --source winget --scope user --silent --accept-source-agreements --accept-package-agreements
         Update-PathFromRegistry
         $py = Find-Python
     }
     if (-not $py) {
-        Write-Host "Trying the Python Install Manager instead..."
-        winget install --id Python.PythonInstallManager -e --source winget --silent --accept-source-agreements --accept-package-agreements
+        if ($haveWinget) { Write-Host "winget didn't install it; downloading Python from python.org instead..." }
+        else { Write-Host "Python 3.11 or newer isn't installed. Downloading it from python.org (this takes a minute)..." }
+        Install-PythonFromPythonOrg
         Update-PathFromRegistry
-        if (Get-Command py -ErrorAction SilentlyContinue) { & py install --yes 3.13 }
         $py = Find-Python
     }
     if (-not $py) {
