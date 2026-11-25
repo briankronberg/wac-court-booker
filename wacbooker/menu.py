@@ -33,6 +33,48 @@ SIGNED_OUT_HELP = (
     "  Some work PCs don't allow it; then bookings run while you're signed in.")
 
 
+def _md(d) -> str:
+    return f"{d:%a} {d.month}/{d.day}"
+
+
+def booking_lines(b: Booking, now: datetime, task: dict | None) -> list[str]:
+    """Menu 1's view of one booking: what it books, then when each upcoming run happens."""
+    t = clubtime.fmt_time
+    end = (b.time + b.length) % (24 * 60)
+    a, z = t(b.time), t(end)
+    span = f"{a[:-3]} to {z}" if a[-2:] == z[-2:] else f"{a} to {z}"
+    when = f"Every {clubtime.DAYS[b.day]}" if b.day is not None else f"Once, {_md(b.date)}"
+    lines = [f"{b.name}{'' if b.active else '  (PAUSED)'}",
+             f"  {when}, {span}, {b.play} with {', '.join(b.partners)}"
+             + (" (or shorter if no court has that long)" if b.shorter_ok else "")]
+    named = [str(c) for c in b.courts if c != "any"]
+    courts = ", then ".join(named + (["any"] if "any" in b.courts else [])) or "any"
+    lines.append(f"  Courts: {courts}.  Login: {b.login}")
+    nxt = b.next_runs(now - clubtime.LATE_OK, 2)
+    if nxt:
+        lines.append("  Next runs (courts open 1 week + 1 hour ahead):")
+        runs = [(f"{_md(o.window)} at {t(o.window.hour * 60 + o.window.minute)}", o) for o in nxt]
+        width = max(len(r) for r, _ in runs)
+        books = [f"books {_md(o.start)}, {t(o.start.hour * 60 + o.start.minute)}" for _, o in runs]
+        bwidth = max(len(x) for x in books)
+        for (run, o), bk in zip(runs, books):
+            on = o.run_at
+            on_txt = t(on.hour * 60 + on.minute) if on.date() == o.window.date() else clubtime.fmt_when(on)
+            lines.append(f"    {run:<{width}}  {bk:<{bwidth}}  (PC on by {on_txt})")
+    else:
+        lines.append("  No future dates (a past one-off). Remove it when you like.")
+    skips = [d for d in b.skip if d >= now.date()]
+    if skips:
+        lines.append(f"  Skipping: {', '.join(_md(d) for d in skips)}")
+    if nxt and b.active and not task:
+        lines.append("  Warning: no scheduled task. Choose 7, then 'Rebuild scheduled tasks'.")
+    elif task:
+        how = "runs even when you're signed out" if task["logon"] == "Password" \
+            else "runs while you're signed in to Windows"
+        lines.append(f"  Scheduled task: {task['state'].lower()} ({how})")
+    return lines
+
+
 def say(msg: str = "") -> None:
     print(msg)
 
@@ -174,25 +216,10 @@ class App:
         except Exception:  # noqa: BLE001
             tasks = {}
         now = clubtime.now_central()
-        say("")
         for b in self.cfg.bookings:
-            say(f"{b.name}{'' if b.active else '  (PAUSED)'}")
-            say(f"  {b.describe()}")
-            nxt = b.next_runs(now - clubtime.LATE_OK, 2)
-            for o in nxt:
-                say(f"  Books {clubtime.fmt_when(o.start)}: window opens {clubtime.fmt_when(o.window)} "
-                    f"(the PC must be on by {clubtime.fmt_when(o.run_at)})")
-            if not nxt:
-                say("  No future dates (past one-off). Remove it when you like.")
-            skips = [d for d in b.skip if d >= now.date()]
-            if skips:
-                say(f"  Skipping: {', '.join(f'{d:%a %m/%d}' for d in skips)}")
-            t = tasks.get(scheduler.task_name(b.name))
-            if nxt and b.active and not t:
-                say("  Warning: no scheduled task. Choose 7 then 'Rebuild scheduled tasks'.")
-            elif t:
-                how = "even when signed out" if t["logon"] == "Password" else "while you're signed in"
-                say(f"  Task: {t['state'].lower()}, runs {how}")
+            say("")
+            for line in booking_lines(b, now, tasks.get(scheduler.task_name(b.name))):
+                say(line)
         local = datetime.now().astimezone()
         if local.utcoffset() != now.utcoffset():
             say("\nNote: this PC isn't on Central time. Times above are club (Central) time; "

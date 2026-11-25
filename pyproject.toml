@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wac-court-booker"
-version = "0.1.4"
+version = "0.1.5"
 description = "Books WAC Hartland tennis courts the moment each booking window opens."
 requires-python = ">=3.11"
 dependencies = [
