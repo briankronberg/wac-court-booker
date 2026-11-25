@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- The release zip holds only what a user needs: README.md, setup.cmd, setup.ps1, get-pwsh.ps1, pyproject.toml and the app. Tests, design notes, this changelog and developer docs stay in the repo (`.gitattributes` export-ignore).
+- README covers only installing and using the app. Developer notes (unit tests, the Windows Sandbox test, releasing) are in DEVELOPMENT.md. The second-PC test checklist is removed.
+
 ## 0.1.6
 
 - Menu 1 says how often a booking runs: "Next runs, every week until you remove or pause it" for a weekly booking, or "Runs once" for a one-off. The two runs listed are only the next ones.

@@ -1,4 +1,4 @@
 """WAC Court Booker: books WAC Hartland tennis courts when each booking window opens."""
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 APP_NAME = "WAC Court Booker"
