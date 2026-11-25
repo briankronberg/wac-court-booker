@@ -8,4 +8,5 @@
 - Singles look in both "2 Singles" and "3.1 Primetime Singles" (evening singles are Primetime); doubles use "1 Doubles".
 - Test everything: login, clock, buddy list, read-only dry run, and a real test booking (30 min, more than 24 h away) with confirm and cancel.
 - Toasts and a log for every run, plus "missed" toasts when the PC was off at W.
+- Test booking checked live: booked on the first press (hidden browser, host plus a household partner), then cancelled. The cancel waits for the site's confirm box before pressing Yes; the Yes button sits hidden in the page beforehand and pressing it early does nothing.
 - `setup.cmd` installs PowerShell 7 and Python if missing, the app, its Chromium and a Start-menu shortcut.

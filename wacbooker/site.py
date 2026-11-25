@@ -672,7 +672,7 @@ class ClubSite:
                 await self.reservation_rows(slot.date)
                 r = await self.js(r"""([date, time, labels]) => {
                     for (const a of document.querySelectorAll('a[id$=hlkScheduleName]')) {
-                      const tr = a.closest('tr'); const t = (tr ? tr.innerText : '').replace(/ /g, ' ');
+                      const tr = a.closest('tr'); const t = (tr ? tr.innerText : '').replace(/\s+/g, ' ');
                       if (t.indexOf(date) >= 0 && t.indexOf(time) >= 0 &&
                           labels.some(l => new RegExp('Tennis court ' + l + '\\b', 'i').test(t))) { a.click(); return 'ok'; }
                     } return 'row not found'; }""",
@@ -682,8 +682,13 @@ class ClubSite:
                 if not await self.wait_for("!!document.querySelector('#ctl00_pageContentHolder_btnCancelSchedule')", 60, 1):
                     raise SiteError("cancel: no Cancel button on the reservation")
                 await self.js("() => { document.querySelector('#ctl00_pageContentHolder_btnCancelSchedule').click(); return 1; }")
-                yes = await self.wait_for("() => { const b = document.querySelector('#ctl00_pageContentHolder_ctrlPopup_btnYes');"
-                                          " if (b) { b.click(); return 'yes'; } return null; }", 15, 1)
+                # The Yes button is always in the page, hidden; clicking it before the
+                # confirm box opens does nothing. Wait until it's actually showing.
+                await asyncio.sleep(2)
+                yes = await self.wait_for(
+                    "() => { const b = document.querySelector('#ctl00_pageContentHolder_ctrlPopup_btnYes');"
+                    " if (!b || !b.offsetParent || getComputedStyle(b).visibility === 'hidden') return null;"
+                    " b.click(); return 'yes'; }", 20, 0.5)
                 if yes != "yes":
                     raise SiteError("cancel: the 'are you sure' box didn't appear")
                 end = time.time() + 60
