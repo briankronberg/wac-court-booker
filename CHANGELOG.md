@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (ready for a second-PC test)
+
+- Setup installs standard Python 3.13 for the current user when none is found (the Python Install Manager is now the fallback). It also finds a per-user Python that isn't on PATH yet, rebuilds the app's environment if its Python was removed, and clears the "downloaded from the internet" mark on the unzipped files.
+- Partner picker: offers to read the buddy list if it hasn't been read yet, and accepts a family member's full name even though they aren't on the buddy list.
+- docs/second-pc-test.md: install-and-test checklist for a new PC. README covers downloading from Releases and the SmartScreen prompt.
+
 ## 0.1.0 (first release, Windows)
 
 - Menu app and commented `bookings.yaml`: add, edit, remove, skip dates, pause and resume bookings; logins with passwords in Windows Credential Manager; browser choice; signed-out runs; wake timers.

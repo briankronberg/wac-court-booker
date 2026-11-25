@@ -180,6 +180,9 @@ class App:
         names = self.buddies(nickname)
         if current and len(current) == need and yes(f"Keep partners {', '.join(current)}?"):
             return current
+        login = self.cfg.login(nickname)
+        if not names and login and yes("Read your buddy list from the club site first, to pick partners by name?"):
+            names = asyncio.run(runner.buddy_list(self.cfg, login, say)) or []
         if not names:
             say("I don't have this login's buddy list yet (menu 7 can read it). Type names exactly as "
                 "they appear in your buddy list on the club site.")
@@ -193,7 +196,11 @@ class App:
                 continue
             hits = [n for n in names if q.lower() in n.lower() and n not in out]
             if not hits:
-                say("  No buddy matches that. Partners must be in your buddy list on the club site.")
+                typed = " ".join(q.split())
+                say("  No buddy matches that. Family members on your club account can be partners "
+                    "without being on the buddy list; type their full name as the club site shows it.")
+                if len(typed.split()) >= 2 and yes(f"  Use '{typed}' anyway?", False):
+                    out.append(typed)
                 continue
             if len(hits) == 1:
                 out.append(hits[0])

@@ -33,13 +33,28 @@ Start-Transcript -Path (Join-Path $app 'logs\setup.log') -Append | Out-Null
 
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
 
+function Test-Python($exe) {
+    try {
+        $ok = & $exe -c "import sys; print(sys.version_info >= (3, 11))" 2>$null
+        return ($LASTEXITCODE -eq 0 -and "$ok".Trim() -eq 'True')
+    } catch { return $false }
+}
+
 function Find-Python {
-    if (-not (Get-Command py -ErrorAction SilentlyContinue)) { return $null }
-    foreach ($v in '3.14', '3.13', '3.12', '3.11') {
-        try {
-            $exe = & py "-$v" -c "import sys; print(sys.executable)" 2>$null
-            if ($LASTEXITCODE -eq 0 -and $exe) { return $exe.Trim() }
-        } catch { }
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        foreach ($v in '3.14', '3.13', '3.12', '3.11') {
+            try {
+                $exe = & py "-$v" -c "import sys; print(sys.executable)" 2>$null
+                if ($LASTEXITCODE -eq 0 -and $exe) { return "$exe".Trim() }
+            } catch { }
+        }
+    }
+    # Standard per-user installs, in case the py launcher isn't on PATH yet.
+    foreach ($v in '314', '313', '312', '311') {
+        foreach ($root in @((Join-Path $env:LOCALAPPDATA 'Programs\Python'), $env:ProgramFiles)) {
+            $exe = Join-Path $root "Python$v\python.exe"
+            if ((Test-Path $exe) -and (Test-Python $exe)) { return $exe }
+        }
     }
     return $null
 }
@@ -53,20 +68,25 @@ function Update-PathFromRegistry {
 try {
     Write-Host "WAC Court Booker setup" -ForegroundColor Green
     Write-Host "Installing to $app"
+    # Files from a downloaded zip carry the "from the internet" mark; clear it.
+    Get-ChildItem -Path $src -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
     Step "Python"
     $py = Find-Python
     if (-not $py) {
-        Write-Host "Python 3.11 or newer isn't installed. Installing the Python Install Manager..."
-        winget install --id Python.PythonInstallManager -e --source winget --accept-source-agreements --accept-package-agreements
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "Python isn't installed and this PC has no winget to install it. Install Python 3.13 from python.org, then run setup.cmd again."
+        }
+        Write-Host "Python 3.11 or newer isn't installed. Installing Python 3.13 (this takes a minute)..."
+        winget install --id Python.Python.3.13 -e --source winget --scope user --silent --accept-source-agreements --accept-package-agreements
         Update-PathFromRegistry
-        if (Get-Command py -ErrorAction SilentlyContinue) { & py install 3.13 }
         $py = Find-Python
     }
     if (-not $py) {
-        Write-Host "Trying the standard Python installer instead..."
-        winget install --id Python.Python.3.13 -e --source winget --accept-source-agreements --accept-package-agreements
+        Write-Host "Trying the Python Install Manager instead..."
+        winget install --id Python.PythonInstallManager -e --source winget --silent --accept-source-agreements --accept-package-agreements
         Update-PathFromRegistry
+        if (Get-Command py -ErrorAction SilentlyContinue) { & py install --yes 3.13 }
         $py = Find-Python
     }
     if (-not $py) {
@@ -77,6 +97,10 @@ try {
     Step "App environment"
     $venv = Join-Path $app 'venv'
     $vpy = Join-Path $venv 'Scripts\python.exe'
+    if ((Test-Path $vpy) -and -not (Test-Python $vpy)) {
+        Write-Host "The app's Python environment is broken (Python was updated or removed); rebuilding it."
+        Remove-Item -Recurse -Force $venv
+    }
     if (-not (Test-Path $vpy)) { & $py -m venv $venv; if ($LASTEXITCODE) { throw "couldn't create $venv" } }
     & $vpy -m pip install --quiet --disable-pip-version-check --upgrade pip
     if ($Dev) { & $vpy -m pip install --quiet --disable-pip-version-check -e $src }
