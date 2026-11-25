@@ -11,6 +11,9 @@ $app = Join-Path $env:LOCALAPPDATA 'WAC Court Booker'
 $exe = Join-Path $app 'venv\Scripts\wac-booker.exe'
 $vpy = Join-Path $app 'venv\Scripts\python.exe'
 $expected = (Get-Content (Join-Path $in 'expected-version.txt') -Raw).Trim()
+# Hands-on mode: a person answers the setup wizard (types the club login), then the
+# signed-in checks run. They're all read-only: sign-in, buddy list, clock and a dry run.
+$interactive = Test-Path (Join-Path $in 'interactive.txt')
 $results = New-Object System.Collections.ArrayList
 # Windows PowerShell 5.1 otherwise puts a byte-order mark in front of text piped to a
 # program, so the menu would read "﻿1" instead of the typed "1".
@@ -35,14 +38,30 @@ function Run-Native($file, [string[]]$argv, $logName, $stdin = $null) {
     $o | Set-Content (Join-Path $out $logName) -Encoding UTF8
     return @{ code = $code; text = ($o -join "`n") }
 }
-function Run-Setup($logName) {
-    # Like a double-click: setup's own window, visible in the sandbox. The only difference
-    # is empty stdin, so a 'pause' after a failure can't hang the test. setup.ps1 keeps a
-    # transcript in logs\setup.log; the part of this run is copied out as $logName.
+function Run-Setup($logName, [switch]$Wizard) {
+    # Like a double-click: setup's own window, visible in the sandbox. Unattended, stdin
+    # is empty so a 'pause' after a failure can't hang the test. With -Wizard (hands-on
+    # mode) it's exactly a double-click: the person at the sandbox answers the wizard, and
+    # READY goes to the progress log once the wizard is up. setup.ps1 keeps a transcript in
+    # logs\setup.log; the part of this run is copied out as $logName.
     $log = Join-Path $app 'logs\setup.log'
     $before = if (Test-Path $log) { (Get-Item $log).Length } else { 0 }
-    $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`" -NoWizard <nul`"" -PassThru -WindowStyle Normal
-    $timedOut = -not $p.WaitForExit(30 * 60 * 1000)
+    if ($Wizard) {
+        $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`"`"" -PassThru -WindowStyle Normal
+        $limit = (Get-Date).AddMinutes(120)
+        $ready = $false
+        while (-not $p.HasExited -and (Get-Date) -lt $limit) {
+            if (-not $ready -and (Get-Process wac-booker -ErrorAction SilentlyContinue)) {
+                $ready = $true
+                Log "READY: the setup wizard is waiting for the club login"
+            }
+            Start-Sleep 2
+        }
+        $timedOut = -not $p.HasExited
+    } else {
+        $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`" -NoWizard <nul`"" -PassThru -WindowStyle Normal
+        $timedOut = -not $p.WaitForExit(30 * 60 * 1000)
+    }
     if ($timedOut) { $p.Kill() }
     if (Test-Path $log) {
         $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
@@ -78,9 +97,9 @@ try {
     $setupCmd = Join-Path $src 'setup.cmd'
     Rec 'unzip' (Test-Path $setupCmd) $src
 
-    # 2. Setup from nothing.
+    # 2. Setup from nothing (hands-on mode: with the wizard, answered by a person).
     $t0 = Get-Date
-    $code = Run-Setup 'setup-console.txt'
+    $code = if ($interactive) { Run-Setup 'setup-console.txt' -Wizard } else { Run-Setup 'setup-console.txt' }
     $mins = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
     Copy-Item (Join-Path $app 'logs\setup.log') (Join-Path $out 'setup.log') -ErrorAction SilentlyContinue
     $console = Get-Content (Join-Path $out 'setup-console.txt') -Raw -ErrorAction SilentlyContinue
@@ -107,24 +126,51 @@ try {
     Rec 'selftest: toast' ($st.toast_shown -eq $true) "toast_shown=$($st.toast_shown)"
     Rec 'selftest: app folder' ($st.home_writable -eq $true -and $st.log_file -eq $true) "home_writable=$($st.home_writable) log_file=$($st.log_file) wake_timers=$($st.wake_timers)"
 
-    # 5. A booking (login without a password), checked and scheduled.
-    $r = Run-Native $vpy @((Join-Path $in 'make_booking.py')) 'make-booking.txt'
+    # 4b. Hands-on mode: the login the person added in the wizard, and read-only checks with it.
+    $nick = $null
+    if ($interactive) {
+        $nick = "$(& $vpy -c "from wacbooker import config; d, c = config.load(); print(c.logins[0].nickname if c.logins else '')")".Trim()
+        $reach = if ($nick) { $st.passwords_reachable.$nick } else { $false }
+        Rec 'wizard: login saved' ($nick -and $reach -eq $true) "login '$nick', password in Credential Manager=$reach"
+        if ($nick) {
+            $r = Run-Native $exe @('test-login', '--login', $nick) 'test-login.txt'
+            Rec 'test-login (read-only)' ($r.code -eq 0) (($r.text -split "`n" | Where-Object { $_ -match 'Signed in|fail|error|couldn' } | Select-Object -First 1) -replace '\(\d+\)', '')
+            $r = Run-Native $exe @('buddies', '--login', $nick) 'buddies.txt'
+            Rec 'buddies (read-only)' ($r.code -eq 0) (($r.text -split "`n" | Where-Object { $_ -match 'budd' } | Select-Object -Last 1))
+        }
+        $r = Run-Native $exe @('clock') 'clock.txt'
+        Rec 'clock' ($r.code -eq 0) ($r.text.Trim() -split "`n" | Select-Object -Last 1)
+    }
+
+    # 5. A booking (login without a password), checked and scheduled. In hands-on mode
+    #    also a PAUSED booking on the real login, used only for the dry run.
+    $mbArgs = @((Join-Path $in 'make_booking.py'))
+    if ($nick) { $mbArgs += @('--dry-login', $nick) }
+    $r = Run-Native $vpy $mbArgs 'make-booking.txt'
     Rec 'write bookings.yaml' ($r.code -eq 0) $r.text.Trim()
+    if ($nick) {
+        $r = Run-Native $exe @('dry-run', '--booking', 'Sandbox dry run') 'dry-run.txt'
+        Rec 'dry-run (read-only)' ($r.code -eq 0 -and $r.text -match 'show open|would go|no court') (($r.text -split "`n" | Where-Object { $_ -match 'min at|would go|Stopped' }) -join ' | ')
+    }
     $r = Run-Native $exe @('check') 'check.txt'
     Rec 'check' ($r.code -eq 0 -and $r.text -match 'Sandbox check') "exit $($r.code)"
     $r = Run-Native $exe @('rebuild-tasks') 'rebuild-tasks.txt'
-    $tasks = @(Get-ScheduledTask -TaskPath '\WAC Court Booker\' -ErrorAction SilentlyContinue)
-    foreach ($t in $tasks) { Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath | Set-Content (Join-Path $out "task-$($t.TaskName).xml") -Encoding UTF8 }
-    Rec 'rebuild-tasks' ($r.code -eq 0 -and $tasks.Count -eq 1) "exit $($r.code), $($tasks.Count) task(s): $(($tasks.TaskName) -join ', ')"
+    $all = @(Get-ScheduledTask -TaskPath '\WAC Court Booker\' -ErrorAction SilentlyContinue)
+    foreach ($t in $all) { Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath | Set-Content (Join-Path $out "task-$($t.TaskName).xml") -Encoding UTF8 }
+    $tasks = @($all | Where-Object { $_.TaskName -eq 'Booking - Sandbox check' })
+    $dryOff = $true
+    if ($nick) { $dryOff = @($all | Where-Object { $_.TaskName -eq 'Booking - Sandbox dry run' -and $_.State -eq 'Disabled' }).Count -eq 1 }
+    Rec 'rebuild-tasks' ($r.code -eq 0 -and $tasks.Count -eq 1 -and $dryOff) "exit $($r.code), tasks: $((($all | ForEach-Object { "$($_.TaskName) [$($_.State)]" })) -join ', ')"
     Run-Native $exe @('tasks') 'tasks.txt' | Out-Null
 
     # 6. Task Scheduler starts the booking the way it would on the day. With no password
     #    it must stop with a plain "Not booked" result before touching the club site.
     $resultsFile = Join-Path $app 'results.jsonl'
     if ($tasks.Count -ge 1) {
+        $n0 = if (Test-Path $resultsFile) { @(Get-Content $resultsFile).Count } else { 0 }
         Start-ScheduledTask -TaskName $tasks[0].TaskName -TaskPath $tasks[0].TaskPath
         $deadline = (Get-Date).AddMinutes(3)
-        while ((Get-Date) -lt $deadline -and -not (Test-Path $resultsFile)) { Start-Sleep 2 }
+        while ((Get-Date) -lt $deadline -and -not ((Test-Path $resultsFile) -and @(Get-Content $resultsFile).Count -gt $n0)) { Start-Sleep 2 }
         Start-Sleep 2
         $last = if (Test-Path $resultsFile) { Get-Content $resultsFile | Select-Object -Last 1 | ConvertFrom-Json } else { $null }
         $info = Get-ScheduledTaskInfo -TaskName $tasks[0].TaskName -TaskPath $tasks[0].TaskPath

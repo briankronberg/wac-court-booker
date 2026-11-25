@@ -20,12 +20,19 @@
   Give up waiting after this long (default 40).
 .PARAMETER KeepOpen
   Leave the sandbox window open afterwards, to look around. Closing it discards everything.
+.PARAMETER HandsOn
+  Run setup with its wizard so a person can type a club login into the sandbox. A line
+  saying READY appears when the wizard is waiting. Then the signed-in checks run too, all
+  read-only (sign-in, buddy list, clock, dry run). The password goes into the sandbox's
+  own Credential Manager and is gone when the sandbox closes. Waits up to 2 hours.
 #>
 param(
     [string]$Zip,
     [int]$TimeoutMinutes = 40,
-    [switch]$KeepOpen
+    [switch]$KeepOpen,
+    [switch]$HandsOn
 )
+if ($HandsOn -and $TimeoutMinutes -lt 150) { $TimeoutMinutes = 150 }
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $version = ((Select-String -Path (Join-Path $repo 'wacbooker\__init__.py') -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value)
@@ -68,6 +75,7 @@ if ($Zip) {
     Remove-Item -Recurse -Force (Join-Path $run 'stage')
 }
 Set-Content (Join-Path $inDir 'expected-version.txt') $version
+if ($HandsOn) { Set-Content (Join-Path $inDir 'interactive.txt') 'hands-on' }
 foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
 
 $config = Join-Path $run 'test.wsb'
