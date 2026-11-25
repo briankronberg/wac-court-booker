@@ -20,11 +20,15 @@
   Install the app from this folder in editable mode (for development).
 .PARAMETER AppHome
   Install somewhere other than %LOCALAPPDATA%\WAC Court Booker.
+.PARAMETER DesktopShortcut
+  Ask (default): ask once whether to put a shortcut on the desktop, and remember the
+  answer; an existing desktop shortcut is just refreshed. Yes or No: don't ask.
 #>
 param(
     [switch]$NoWizard,
     [switch]$Dev,
-    [string]$AppHome
+    [string]$AppHome,
+    [ValidateSet('Ask', 'Yes', 'No')][string]$DesktopShortcut = 'Ask'
 )
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
@@ -167,15 +171,38 @@ try {
     $key = 'HKCU:\Software\Classes\AppUserModelId\WACCourtBooker'
     New-Item -Path $key -Force | Out-Null
     Set-ItemProperty -Path $key -Name DisplayName -Value 'WAC Court Booker'
-    $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk'
     $sh = New-Object -ComObject WScript.Shell
-    $s = $sh.CreateShortcut($lnk)
-    $s.TargetPath = Join-Path $venv 'Scripts\wac-booker.exe'
-    if ($AppHome) { $s.Arguments = "--home `"$app`"" }
-    $s.WorkingDirectory = $app
-    $s.Description = 'Book WAC Hartland tennis courts when each booking window opens'
-    $s.Save()
+    function Save-Shortcut($path) {
+        $s = $sh.CreateShortcut($path)
+        $s.TargetPath = Join-Path $venv 'Scripts\wac-booker.exe'
+        if ($AppHome) { $s.Arguments = "--home `"$app`"" }
+        $s.WorkingDirectory = $app
+        $s.Description = 'Book WAC Hartland tennis courts when each booking window opens'
+        $s.Save()
+    }
+    Save-Shortcut (Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk')
     Write-Host "Start-menu shortcut: WAC Court Booker"
+
+    # Desktop shortcut: asked once (the answer is remembered), so updates don't ask again.
+    $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'WAC Court Booker.lnk'
+    $choiceFile = Join-Path $app 'desktop-shortcut.txt'
+    $want = $DesktopShortcut
+    if ($want -eq 'Ask') {
+        if (Test-Path $desk) { $want = 'Yes' }
+        elseif (Test-Path $choiceFile) { $want = (Get-Content $choiceFile -Raw).Trim() }
+        elseif ([Console]::IsInputRedirected) { $want = 'No' }   # unattended: don't guess, ask next time
+        else {
+            $a = Read-Host "Put a WAC Court Booker shortcut on your desktop too, to open the app easily? (Y/n)"
+            $want = if ($a -match '^\s*n') { 'No' } else { 'Yes' }
+            Set-Content $choiceFile $want
+        }
+    } else {
+        Set-Content $choiceFile $want
+    }
+    if ($want -eq 'Yes') {
+        Save-Shortcut $desk
+        Write-Host "Desktop shortcut: WAC Court Booker"
+    }
 
     $ver = & $vpy -m wacbooker version
     Write-Host "`nInstalled WAC Court Booker $ver." -ForegroundColor Green

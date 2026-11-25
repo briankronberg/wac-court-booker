@@ -10,7 +10,7 @@ Windows only for now as I do not have a Mac to test the builds on. [DESIGN.md](D
 ## Install
 
 1. On GitHub, open **Releases**, download `wac-court-booker-<version>.zip`, unzip it anywhere (Downloads is fine), and double-click **setup.cmd**. If Windows says "Windows protected your PC", choose **More info → Run anyway** (it does that for any file from the internet).
-2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu, then starts a short wizard:
+2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu, asks whether you also want a shortcut on your desktop, then starts a short wizard:
    - add your club login (the password goes straight into Windows Credential Manager and is never written to a file);
    - test the login and read your buddy list, so partners can be picked by name;
    - check the PC clock against internet time;
