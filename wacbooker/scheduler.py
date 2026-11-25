@@ -27,7 +27,8 @@ from xml.sax.saxutils import escape
 from . import APP_NAME, clubtime, paths
 from .config import Booking, Config
 
-FOLDER = f"\\{APP_NAME}\\"
+# WACB_TASK_FOLDER lets tests use their own folder (e.g. \WAC Court Booker\Test\).
+FOLDER = os.environ.get("WACB_TASK_FOLDER") or f"\\{APP_NAME}\\"
 TEST_FOLDER = f"\\{APP_NAME}\\Test\\"
 PREFIX = "Booking - "
 DAY_TAGS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

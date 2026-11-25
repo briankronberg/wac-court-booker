@@ -399,12 +399,12 @@ def booking_to_map(b: Booking) -> CommentedMap:
     if b.day is not None:
         m["day"] = clubtime.DAYS[b.day]
     else:
-        m["date"] = b.date.isoformat()
+        m["date"] = b.date
     m["time"] = clubtime.fmt_time(b.time)
     m["length"] = b.length
     m["shorter_ok"] = b.shorter_ok
     m["courts"] = _flow(b.courts)
-    m["skip"] = _flow([d.isoformat() for d in sorted(b.skip)])
+    m["skip"] = _flow(sorted(b.skip))
     m["active"] = b.active
     return m
 

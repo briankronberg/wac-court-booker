@@ -501,6 +501,11 @@ class App:
 
     def wizard(self) -> None:
         say(f"\nWelcome to {APP_NAME}. A few questions to get going.\n")
+        if self.cfg.browser == "hidden" and not any(paths.browsers_dir().glob("chromium*")):
+            say("The app's own browser isn't installed (setup couldn't download it), so bookings will "
+                "use Microsoft Edge with a separate profile. You can change this in menu 7.\n")
+            config.set_setting(self.doc, "browser", "edge")
+            self.commit("browser set to edge")
         say("Step 1: add your club login.")
         login = self.cfg.logins[0] if self.cfg.logins else None
         if login and creds.has_password(login.username):
