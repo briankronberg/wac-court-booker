@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- **Clearer layout for menu 1 (Show my bookings):** each booking says what it books ("Every Tuesday, 6:00 to 6:30 AM, singles with ..."), its courts in order and its login. Under "Next runs (courts open 1 week + 1 hour ahead)", each line pairs the moment the app books with the court time it books, and when the PC must be on. That time shows its date when it falls on the day before. The task line says "Scheduled task".
+
 ## 0.1.4
 
 - **Fix: reading family members found nobody.** Each member row on the participants page starts with a cell that holds only a checkbox. The reader took that empty cell as the name and skipped every row. It now reads the cells that have text, on rows with a member checkbox. If it still finds nothing, it logs the table's layout.
