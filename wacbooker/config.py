@@ -390,6 +390,24 @@ def _seq(doc: Any, key: str) -> CommentedSeq:
     return cur
 
 
+def auto_name(play: str, partners: list[str], day: int | None, one_off: date | None, minutes: int,
+              taken: list[str] = ()) -> str:
+    """A booking's name, made from what it books: 'Tue 6:00 PM singles with Andrea', or
+    'Sat 12/19 6:00 PM doubles with Pat, Sam, Kim' for a one-off. Partners by first name.
+    Gets ' (2)', ' (3)' ... if another booking already has that name."""
+    when = clubtime.DAYS[day][:3] if day is not None else (
+        f"{one_off:%a} {one_off.month}/{one_off.day}" if one_off else "")
+    firsts = [p.split()[0] for p in partners if p.split()]
+    base = " ".join(x for x in (when, clubtime.fmt_time(minutes), play) if x)
+    if firsts:
+        base += " with " + ", ".join(firsts)
+    used = {t.lower() for t in taken}
+    name, n = base, 2
+    while name.lower() in used:
+        name, n = f"{base} ({n})", n + 1
+    return name
+
+
 def booking_to_map(b: Booking) -> CommentedMap:
     m = CommentedMap()
     m["name"] = b.name

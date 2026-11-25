@@ -272,9 +272,6 @@ class App:
         if not cfg.logins:
             say("Add a club login first (menu 7).")
             return None
-        name = ask("Name for this booking", old.name if old else "")
-        if not name:
-            return None
         if len(cfg.logins) == 1:
             login = cfg.logins[0].nickname
         else:
@@ -282,7 +279,8 @@ class App:
             login = cfg.logins[i].nickname
         play = ""
         while play not in ("singles", "doubles"):
-            play = ask("Singles or doubles", old.play if old else "doubles").lower()
+            a = ask("Singles or doubles", old.play if old else "singles").lower()
+            play = {"s": "singles", "d": "doubles"}.get(a, a)
         partners = self.pick_partners(login, play, old.partners if old and old.play == play else [])
         weekly = yes("Every week?", old.day is not None if old else True)
         day = one_off = None
@@ -324,6 +322,12 @@ class App:
                 say("  " + " ".join(e.replace("Booking 'x': ", "") for e in errs))
             else:
                 courts = b.courts
+        # The name is made from the booking (it labels the task, results and menus). An
+        # edited booking keeps a name typed by hand; a made-up name follows the changes.
+        others = [b.name for b in cfg.bookings if not old or b.name != old.name]
+        name = config.auto_name(play, partners, day, one_off, minutes, others)
+        if old and old.name != config.auto_name(old.play, old.partners, old.day, old.date, old.time, others):
+            name = old.name
         new = Booking(name=name, login=login, play=play, partners=partners, time=minutes, length=length,
                       courts=courts, day=day, date=one_off, shorter_ok=shorter_ok,
                       skip=list(old.skip) if old else [], active=old.active if old else True)

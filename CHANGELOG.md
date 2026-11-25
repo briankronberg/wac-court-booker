@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- **Fix: reading family members found nobody.** Each member row on the participants page starts with a cell that holds only a checkbox. The reader took that empty cell as the name and skipped every row. It now reads the cells that have text, on rows with a member checkbox. If it still finds nothing, it logs the table's layout.
+- **No booking name to type.** The name is made from the booking, for example "Tue 6:00 PM singles with Andrea" or "Sat 12/19 8:30 AM doubles with Pat, Sam, Kim", with " (2)" added if another booking already has it. When you edit a booking, a made-up name follows the changes; a name typed by hand in bookings.yaml stays.
+- **Updating while the app is open:** setup used to fail with a pip "file in use" error. It now says to close the menu window, waits up to 5 minutes, and carries on by itself once it's closed. It never stops a running booking.
+- **Singles is the default,** and "s" or "d" is enough as an answer.
+
 ## 0.1.3
 
 - **Family members at the top of the partner list.** The club site lists family members (Spouse, Child, ...) only on the participants page, which opens once a court is in the cart. The app saves them each time it reaches that page (test booking, real booking). The wizard and menu 7 ("Read a login's family members") can also read them on purpose: they put a quiet 30-minute court in the cart for a few seconds, read the list, then press Back, which empties the cart. Nothing is booked. In the partner list, family members come first and are marked "(family)".
