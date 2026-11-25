@@ -52,7 +52,8 @@ def booking_lines(b: Booking, now: datetime, task: dict | None) -> list[str]:
     lines.append(f"  Courts: {courts}.  Login: {b.login}")
     nxt = b.next_runs(now - clubtime.LATE_OK, 2)
     if nxt:
-        lines.append("  Next runs (courts open 1 week + 1 hour ahead):")
+        lines.append("  Next runs, every week until you remove or pause it (courts open 1 week + 1 hour ahead):"
+                     if b.day is not None else "  Runs once (courts open 1 week + 1 hour ahead):")
         runs = [(f"{_md(o.window)} at {t(o.window.hour * 60 + o.window.minute)}", o) for o in nxt]
         width = max(len(r) for r, _ in runs)
         books = [f"books {_md(o.start)}, {t(o.start.hour * 60 + o.start.minute)}" for _, o in runs]
