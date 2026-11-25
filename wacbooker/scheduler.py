@@ -41,6 +41,10 @@ def pwsh() -> str:
     default = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "PowerShell" / "7" / "pwsh.exe"
     if default.exists():
         return str(default)
+    # setup.cmd puts a private copy here on PCs without winget.
+    private = Path(os.environ.get("LOCALAPPDATA", "")) / APP_NAME / "pwsh" / "pwsh.exe"
+    if private.exists():
+        return str(private)
     raise RuntimeError("PowerShell 7 (pwsh) isn't installed. Run setup.cmd again.")
 
 

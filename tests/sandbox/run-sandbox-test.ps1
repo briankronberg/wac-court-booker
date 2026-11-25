@@ -1,0 +1,115 @@
+<#
+.SYNOPSIS
+  Installs WAC Court Booker on a clean Windows in Windows Sandbox and checks it, unattended.
+
+.DESCRIPTION
+  Builds a release-style zip from this working tree (or uses -Zip), starts Windows Sandbox
+  with it mapped read-only, and runs tests\sandbox\inside.ps1 there at sign-in. That script
+  installs from the zip with setup.cmd -NoWizard, then checks PowerShell 7 and Python got
+  installed, the self-test (browser and toast), check, rebuild-tasks, a run started by
+  Task Scheduler, the menu, a second setup run, and the offline unit tests.
+
+  Nothing signs in to the club site: the only login in the sandbox has no password, so
+  nothing can be booked. Results land in .sandbox\<time>\out (report.json and logs).
+
+  Needs the Windows Sandbox feature, and no other sandbox running (Windows allows one).
+
+.PARAMETER Zip
+  Test this release zip instead of building one from the working tree.
+.PARAMETER TimeoutMinutes
+  Give up waiting after this long (default 40).
+.PARAMETER KeepOpen
+  Leave the sandbox window open afterwards, to look around. Closing it discards everything.
+#>
+param(
+    [string]$Zip,
+    [int]$TimeoutMinutes = 40,
+    [switch]$KeepOpen
+)
+$ErrorActionPreference = 'Stop'
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$version = ((Select-String -Path (Join-Path $repo 'wacbooker\__init__.py') -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value)
+$run = Join-Path $repo ".sandbox\$(Get-Date -Format yyyyMMdd-HHmmss)"
+$inDir = Join-Path $run 'in'
+$outDir = Join-Path $run 'out'
+New-Item -ItemType Directory -Force $inDir, $outDir | Out-Null
+
+if (-not (Get-Command WindowsSandbox.exe -ErrorAction SilentlyContinue)) {
+    throw "Windows Sandbox isn't turned on. Turn on the 'Windows Sandbox' feature, restart, then try again."
+}
+$wsb = Get-Command wsb.exe -ErrorAction SilentlyContinue
+function Get-SandboxIds {
+    if (-not $wsb) { return @() }
+    $j = & wsb.exe list --raw 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
+    return @($j.WindowsSandboxEnvironments | ForEach-Object { $_.Id })
+}
+if ((Get-SandboxIds).Count -or (Get-Process WindowsSandboxRemoteSession -ErrorAction SilentlyContinue)) {
+    throw "A Windows Sandbox is already running. Close it first (Windows allows only one)."
+}
+
+# The zip under test.
+if ($Zip) {
+    Copy-Item $Zip $inDir
+    if ((Split-Path $Zip -Leaf) -match 'wac-court-booker-(.+)\.zip') { $version = $Matches[1] }
+} else {
+    # Every tracked or new (not ignored) file, as the release zip lays them out.
+    $name = "wac-court-booker-$version"
+    $stage = Join-Path $run "stage\$name"
+    Push-Location $repo
+    try {
+        $files = git ls-files --cached --others --exclude-standard | Where-Object { Test-Path $_ -PathType Leaf }
+        foreach ($f in $files) {
+            $dest = Join-Path $stage $f
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Copy-Item $f $dest
+        }
+    } finally { Pop-Location }
+    Compress-Archive -Path $stage -DestinationPath (Join-Path $inDir "$name.zip")
+    Remove-Item -Recurse -Force (Join-Path $run 'stage')
+}
+Set-Content (Join-Path $inDir 'expected-version.txt') $version
+foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
+
+$config = Join-Path $run 'test.wsb'
+@"
+<Configuration>
+  <MemoryInMB>4096</MemoryInMB>
+  <Networking>Enable</Networking>
+  <MappedFolders>
+    <MappedFolder><HostFolder>$inDir</HostFolder><SandboxFolder>C:\wacb\in</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>$outDir</HostFolder><SandboxFolder>C:\wacb\out</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>
+  </MappedFolders>
+  <LogonCommand><Command>cmd.exe /c C:\wacb\in\inside.cmd</Command></LogonCommand>
+</Configuration>
+"@ | Set-Content $config -Encoding UTF8
+
+Write-Host "Testing WAC Court Booker $version in Windows Sandbox. Results: $outDir"
+Start-Process WindowsSandbox.exe -ArgumentList "`"$config`""
+
+$progress = Join-Path $outDir 'progress.log'
+$done = Join-Path $outDir 'done.json'
+$shown = 0
+$deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+while ((Get-Date) -lt $deadline -and -not (Test-Path $done)) {
+    Start-Sleep 5
+    if (Test-Path $progress) {
+        $lines = @(Get-Content $progress)
+        $lines | Select-Object -Skip $shown | ForEach-Object { Write-Host "  $_" }
+        $shown = $lines.Count
+    }
+}
+if (Test-Path $progress) { Get-Content $progress | Select-Object -Skip $shown | ForEach-Object { Write-Host "  $_" } }
+
+if (-not $KeepOpen) {
+    foreach ($id in Get-SandboxIds) { & wsb.exe stop --id $id 2>$null | Out-Null }
+    Get-Process WindowsSandboxRemoteSession, WindowsSandboxClient -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+if (-not (Test-Path $done)) {
+    Write-Host "Timed out after $TimeoutMinutes minutes. Partial results: $outDir" -ForegroundColor Red
+    exit 2
+}
+$sum = Get-Content $done -Raw | ConvertFrom-Json
+$colour = if ($sum.failed) { 'Red' } else { 'Green' }
+Write-Host "`n$($sum.passed) passed, $($sum.failed) failed. Details: $outDir" -ForegroundColor $colour
+exit ([int]($sum.failed -gt 0))
