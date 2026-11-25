@@ -6,7 +6,7 @@ Windows only for now. [DESIGN.md](DESIGN.md) explains the decisions behind it.
 
 ## Install
 
-1. Download the release zip, unzip it anywhere (Downloads is fine), and double-click **setup.cmd**.
+1. On GitHub, open **Releases**, download `wac-court-booker-<version>.zip`, unzip it anywhere (Downloads is fine), and double-click **setup.cmd**. If Windows says "Windows protected your PC", choose **More info → Run anyway** (it does that for any file from the internet).
 2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu, then starts a short wizard:
    - add your club login (the password goes straight into Windows Credential Manager and is never written to a file);
    - test the login and read your buddy list, so partners can be picked by name;
@@ -16,7 +16,7 @@ Windows only for now. [DESIGN.md](DESIGN.md) explains the decisions behind it.
    - offer a test booking you can cancel straight after;
    - add your first booking.
 
-Run setup.cmd again any time to update the app. Your bookings and logins are kept.
+Run setup.cmd again any time to update the app. Your bookings and logins are kept. Installing on a new PC for the first time? Follow [docs/second-pc-test.md](docs/second-pc-test.md).
 
 ## Day to day
 
@@ -40,7 +40,7 @@ On a booking day there's nothing to do. A toast tells you how it went, for examp
 
 ## What a booking can be
 
-- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site.
+- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site. Family members on your club account can be partners too; type their full name.
 - 30, 60 or 90 minutes, optionally falling back to shorter at the same start time.
 - A court preference list, such as `5, 4, 3, any`. `any` is optional and must come last.
 - Weekly on a day, or a one-off date, with skip dates.
@@ -111,6 +111,6 @@ pwsh -NoProfile -File setup.ps1 -Dev -NoWizard     # editable install into %LOCA
 
 The tests run offline: the booking engine is tested against a fake club site and a fake clock (`tests/fakes.py`). Set `WACB_HOME` to use a scratch folder and `WACB_TASK_FOLDER` (for example `\WAC Court Booker\Test\`) to keep test tasks apart from real ones.
 
-Release zip: `git archive --format=zip -o wac-court-booker-<version>.zip HEAD`.
+Release: merge to `main`, then `git archive --format=zip --prefix=wac-court-booker-<version>/ -o dist\wac-court-booker-<version>.zip v<version>` on the tag, and attach the zip to a GitHub release (`gh release create`).
 
 Rules: never run a real booking or cancel without the account holder's OK for that run; never print or log passwords. Keep `pyproject.toml` and `wacbooker/__init__.py` on the same version and record changes in [CHANGELOG.md](CHANGELOG.md).
