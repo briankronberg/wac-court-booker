@@ -125,8 +125,10 @@ $config = Join-Path $run 'test.wsb'
 if ($Reuse) {
     # Same sandbox and sign-in session: run the driver again, in update mode.
     Write-Host "Updating the open sandbox to WAC Court Booker $version. Results: $outDir"
-    Start-Process wsb.exe -WindowStyle Hidden -ArgumentList @('exec', '--id', $running[0], '-r', 'ExistingLogin',
-        '-c', 'cmd.exe /c C:\wacb\in\inside.cmd')
+    # One argument string with the command quoted: Start-Process doesn't quote array items,
+    # so the command would otherwise reach wsb split at its spaces.
+    Start-Process wsb.exe -WindowStyle Hidden -ArgumentList ("exec --id $($running[0]) -r ExistingLogin " +
+        '-c "cmd.exe /c C:\wacb\in\inside.cmd"')
 } else {
     Write-Host "Testing WAC Court Booker $version in Windows Sandbox. Results: $outDir"
     Start-Process WindowsSandbox.exe -ArgumentList "`"$config`""
