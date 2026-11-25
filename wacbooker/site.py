@@ -29,7 +29,17 @@ from . import clubtime, paths
 from .engine import (CONFIRMED, NO_POST, NOT_READY, OFFPAGE, REJECTED, UNKNOWN, Attempt, SiteError,
                      Slot)
 
-BASE = "https://hnd-p-ols.spectrumng.net/LCRAC"
+
+def why(e: BaseException, n: int = 120) -> str:
+    """First line of an error, never empty: a timeout's message is often blank, and
+    an empty message once broke the error handling itself ("list index out of range")."""
+    for line in str(e).splitlines():
+        if line.strip():
+            return line.strip()[:n]
+    return "timed out" if isinstance(e, (asyncio.TimeoutError, TimeoutError)) else type(e).__name__
+
+
+BASE ="https://hnd-p-ols.spectrumng.net/LCRAC"
 LOGIN_URL = BASE + "/Login.aspx"
 HOME_URL = BASE + "/Home.aspx"
 BUDDY_URL = BASE + "/Members/Buddy/MemberBuddy.aspx?isKiosk=False&pname=Account%20Information@My%20Buddy%20List&pid=ACI,ABD"
@@ -87,6 +97,27 @@ JS_DIALOG = r"""(court) => {
       b.click(); return 'continued';
     }
   } return 'waiting'; }"""
+
+# The participants page's member table: one row per person, cells Name, Relationship
+# (Main = the signed-in member, Spouse/Child/... = family on the account, Buddy).
+JS_PARTICIPANTS = r"""() => { const g = document.querySelector('table[id$="ctrlMemberBuddy_gridViewMembers"]');
+  if (!g) return null;
+  return Array.from(g.querySelectorAll('tr')).map(tr => Array.from(tr.querySelectorAll('td'))
+    .map(td => (td.innerText || '').replace(/\s+/g, ' ').trim())).filter(c => c.length >= 2 && c[0]); }"""
+
+
+def family_from(cells: list[list[str]], me: str = "") -> list[str]:
+    """Family members on the account: participant rows whose relationship isn't
+    Main (the member) or Buddy. Keeps the page's order."""
+    out = []
+    for c in cells or []:
+        name, rel = " ".join(c[0].split()), c[1].strip().lower()
+        if not name or rel in ("main", "buddy", "") or name.lower() == (me or "").lower():
+            continue
+        if name not in out:
+            out.append(name)
+    return out
+
 
 JS_FAMILY_ROWS = r"""() => { const out = [];
   for (const tr of document.querySelectorAll('tr')) {
@@ -193,6 +224,7 @@ class ClubSite:
         self.show_window = show_window
         self._log = log or (lambda m: None)
         self.member_name = ""
+        self.family: list[str] | None = None  # set once a participants page was read
         self.member_number = ""
         self.pw = None
         self.ctx = None
@@ -241,7 +273,7 @@ class ClubSite:
                 self.page = self.ctx.pages[0] if self.ctx.pages else await self.ctx.new_page()
         except Exception as e:
             await self.close()
-            raise SiteError(f"the {self.browser} browser didn't start: {str(e).splitlines()[0][:160]}") from e
+            raise SiteError(f"the {self.browser} browser didn't start: {why(e, 160)}") from e
         self.page.set_default_timeout(30_000)
         self.page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
         self.page.on("request", self._on_request)
@@ -278,13 +310,13 @@ class ClubSite:
                 return await asyncio.wait_for(self.page.evaluate(expr), timeout)
             return await asyncio.wait_for(self.page.evaluate(expr, arg), timeout)
         except Exception as e:  # noqa: BLE001 -- navigation in flight, page gone, timeout
-            raise SiteError(f"page script failed: {str(e).splitlines()[0][:120]}") from e
+            raise SiteError(f"page script failed: {why(e, 120)}") from e
 
     async def goto(self, url: str, timeout: float = 90) -> None:
         try:
             await self.page.goto(url, wait_until="load", timeout=timeout * 1000)
         except Exception as e:  # noqa: BLE001
-            raise SiteError(f"page didn't load: {str(e).splitlines()[0][:120]}") from e
+            raise SiteError(f"page didn't load: {why(e, 120)}") from e
         try:
             await self.page.evaluate(SHIM)  # the site's own scripts replace window.confirm
         except Exception:  # noqa: BLE001
@@ -331,7 +363,7 @@ class ClubSite:
             await self.page.fill("#ctl00_pageContentHolder_loginControl_Password", self._secret)
             await self.page.click("#ctl00_pageContentHolder_loginControl_Login", no_wait_after=True)
         except Exception as e:  # noqa: BLE001
-            raise SiteError(f"couldn't fill in the sign-in form: {str(e).splitlines()[0][:100]}") from e
+            raise SiteError(f"couldn't fill in the sign-in form: {why(e, 100)}") from e
         end = time.time() + 120
         while time.time() < end:
             await asyncio.sleep(1)
@@ -479,8 +511,11 @@ class ClubSite:
         res = None
         end = time.time() + 120
         while time.time() < end:
-            res = await self.js(JS_DIALOG, label)
-            if res != "waiting":
+            try:
+                res = await self.js(JS_DIALOG, label)
+            except SiteError as e:  # a slow moment or a page change in flight; look again
+                res = f"waiting ({e})"
+            if not str(res).startswith("waiting"):
                 break
             await asyncio.sleep(0.5)
         if res != "continued":
@@ -496,6 +531,20 @@ class ClubSite:
         self.staged = slot
         self.last_fresh = time.time()
         self.log(f"staged {slot.describe()}")
+        if self.family is None:  # once per session: a re-stage near W must stay fast
+            await self._note_family()
+
+    async def _note_family(self, wait: float = 5) -> None:
+        """Remember the family members the participants page lists (the only page
+        on the club site that shows them). Never fails the caller."""
+        try:
+            cells = await self.wait_for(JS_PARTICIPANTS, wait, 0.5)
+            fam = family_from(cells or [], self.member_name)
+            if cells:
+                self.family = fam
+                self.log(f"family on the account: {len(fam)}")
+        except Exception as e:  # noqa: BLE001
+            self.log(f"couldn't read family members: {why(e)}")
 
     async def _family_loaded(self, slot: Slot, timeout: float) -> bool:
         return bool(await self.wait_for(

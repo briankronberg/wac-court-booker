@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- **Family members at the top of the partner list.** The club site lists family members (Spouse, Child, ...) only on the participants page, which opens once a court is in the cart. The app saves them each time it reaches that page (test booking, real booking). The wizard and menu 7 ("Read a login's family members") can also read them on purpose: they put a quiet 30-minute court in the cart for a few seconds, read the list, then press Back, which empties the cart. Nothing is booked. In the partner list, family members come first and are marked "(family)".
+- **Partner picker:** partners are chosen from the buddy list with the arrow keys. Typing narrows the list, Enter chooses and Esc takes back the last pick. The last row, "Someone not on this list", lets you type a family member's full name. When input isn't a console (piped), partners are typed as before.
+- **"Run while signed out?":** the question now explains both ways a scheduled task can run, and that the signed-out way stores your Windows user name and password with the task. The wizard and menu 7 use the same wording.
+- **Fix: "list index out of range".** When a page script timed out, the error message came back empty, and building it raised IndexError instead of the app's own retryable error. That stopped the test booking on the first slow page, and a real booking would have stopped the same way. Now a slow page is a normal error and gets retried, and the "Booking Details" box is polled through brief page changes.
+- **Test booking log:** everything the test booking shows, and any unexpected error with its details, now also goes to the log and to results. An error no longer stops the wizard.
+
 ## 0.1.2
 
 - Setup works on a PC without winget, such as Windows Sandbox or some managed or older PCs:

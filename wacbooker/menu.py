@@ -5,7 +5,8 @@ import asyncio
 import getpass
 from datetime import date, datetime, timedelta
 
-from . import APP_NAME, __version__, clock, clubtime, config, creds, notify, paths, results, runner, scheduler
+from . import (APP_NAME, __version__, clock, clubtime, config, creds, notify, paths, picker, results, runner,
+               scheduler)
 from .config import Booking, Login
 
 MENU = f"""
@@ -22,6 +23,14 @@ MENU = f"""
 9  Show recent results
 0  Quit
 """
+
+
+SIGNED_OUT_HELP = (
+    "  The scheduled tasks can run two ways. One needs you to be signed in to this computer (the\n"
+    "  screen can be locked). The other runs even when you're signed out, as long as the computer\n"
+    "  is on. For that one, the scheduled task has to store your Windows user name and password\n"
+    "  (Windows keeps them, not this app). If that's OK, choose Yes for \"Run while signed out\".\n"
+    "  Some work PCs don't allow it; then bookings run while you're signed in.")
 
 
 def say(msg: str = "") -> None:
@@ -134,6 +143,25 @@ class App:
     def buddies(self, nickname: str) -> list[str]:
         return (runner.load_buddies().get(nickname) or {}).get("names") or []
 
+    def offer_family(self, login: Login) -> list[str] | None:
+        """Ask, then read the login's family members (a few seconds with a court in the cart)."""
+        say("  Family members on your club account aren't on the buddy list. The club site shows them\n"
+            "  only on the page where you choose who's playing, which opens once a court is in your\n"
+            "  cart. To read them, the app puts a quiet 30-minute court in your cart for a few seconds,\n"
+            "  reads the names, then presses Back, which empties the cart. Nothing is booked.")
+        if not yes("  Read your family members now?", True):
+            say("  Skipped. A test booking also reads them, or use menu 7 later.")
+            return None
+        fam = asyncio.run(runner.read_family(self.cfg, login, say))
+        if fam is not None:
+            say(f"  Family members: {', '.join(fam) if fam else 'none on this account'}.")
+        return fam
+
+    def read_family(self) -> None:
+        login = self.pick_login("Whose family members?")
+        if login:
+            self.offer_family(login)
+
     # ------------------------------------------------------------ 1 show
     def show(self) -> None:
         if not self.explain_problems():
@@ -177,16 +205,44 @@ class App:
 
     def pick_partners(self, nickname: str, play: str, current: list[str]) -> list[str]:
         need = config.PARTNERS_FOR[play]
-        names = self.buddies(nickname)
         if current and len(current) == need and yes(f"Keep partners {', '.join(current)}?"):
             return current
         login = self.cfg.login(nickname)
-        if not names and login and yes("Read your buddy list from the club site first, to pick partners by name?"):
-            names = asyncio.run(runner.buddy_list(self.cfg, login, say)) or []
+        buddies = self.buddies(nickname)
+        if not buddies and login and yes("Read your buddy list from the club site first, to pick partners by name?"):
+            buddies = asyncio.run(runner.buddy_list(self.cfg, login, say)) or []
+        family = runner.load_family(nickname)
+        if family is None and login and buddies:
+            family = self.offer_family(login)
+        family = family or []
+        # Family members first, then buddies (a family member who's also a buddy shows once).
+        names = family + [n for n in buddies if n.lower() not in {f.lower() for f in family}]
+        labels = {f"{n}  (family)" if n in family else n: n for n in names}
         if not names:
             say("I don't have this login's buddy list yet (menu 7 can read it). Type names exactly as "
                 "they appear in your buddy list on the club site.")
         out: list[str] = []
+        if names and picker.available():
+            while len(out) < need:
+                label = f"Partner {len(out) + 1} of {need}" + (f" (picked: {', '.join(out)})" if out else "")
+                got = picker.pick(label, [lab for lab, n in labels.items() if n not in out],
+                                  "Not listed? Choose the last row and type their full name.")
+                got = labels.get(got, got)
+                if got is None:  # Esc: take back the last pick (or keep the old partners)
+                    if out:
+                        out.pop()
+                    elif len(current) == need:
+                        return current
+                elif got == picker.OTHER:
+                    typed = " ".join(ask("  Full name, exactly as the club site shows it").split())
+                    if len(typed.split()) >= 2 and typed not in out:
+                        out.append(typed)
+                    elif typed:
+                        say("  Please type a first and last name.")
+                else:
+                    out.append(got)
+                    say(f"  Partner {len(out)}: {got}")
+            return out
         while len(out) < need:
             q = ask(f"Partner {len(out) + 1} of {need} (type part of a name)")
             if not q:
@@ -197,8 +253,8 @@ class App:
             hits = [n for n in names if q.lower() in n.lower() and n not in out]
             if not hits:
                 typed = " ".join(q.split())
-                say("  No buddy matches that. Family members on your club account can be partners "
-                    "without being on the buddy list; type their full name as the club site shows it.")
+                say("  Nobody on your family or buddy list matches that. If they're on your club account, "
+                    "type their full name as the club site shows it.")
                 if len(typed.split()) >= 2 and yes(f"  Use '{typed}' anyway?", False):
                     out.append(typed)
                 continue
@@ -331,15 +387,16 @@ class App:
     # ------------------------------------------------------------ 7 logins
     def logins(self) -> None:
         while True:
-            opts = ["Add a login", "Test a login", "Read a login's buddy list", "Remove a login",
+            opts = ["Add a login", "Test a login", "Read a login's buddy list", "Read a login's family members",
+                    "Remove a login",
                     f"Browser (now: {self.cfg.browser}{', window shown' if self.cfg.show_window else ''})",
                     f"Run while signed out (now: {'yes' if self.cfg.run_signed_out else 'no'})",
                     "Rebuild scheduled tasks", f"Wake timers (now: {self._wake_text()})"]
             i = choose("\nLogins and settings", opts)
             if i is None:
                 return
-            [self.add_login, self.test_login, self.read_buddies, self.remove_login, self.set_browser,
-             self.set_signed_out, self.rebuild_tasks, self.wake][i]()
+            [self.add_login, self.test_login, self.read_buddies, self.read_family, self.remove_login,
+             self.set_browser, self.set_signed_out, self.rebuild_tasks, self.wake][i]()
 
     def _wake_text(self) -> str:
         on = scheduler.wake_timers_on()
@@ -377,6 +434,7 @@ class App:
             names = asyncio.run(runner.buddy_list(self.cfg, login, say))
             if names is not None:
                 say(f"  {len(names)} buddies saved for picking partners.")
+            self.offer_family(login)
         else:
             say("Check the username and password, then add the login again with the same nickname.")
         return login
@@ -420,7 +478,8 @@ class App:
         self.commit(f"browser set to {br}")
 
     def set_signed_out(self) -> None:
-        on = yes("Run bookings even when nobody is signed in to Windows?", self.cfg.run_signed_out)
+        say(SIGNED_OUT_HELP)
+        on = yes("Run while signed out?", self.cfg.run_signed_out)
         config.set_setting(self.doc, "run_signed_out", on)
         self.windows_password = None
         self.commit(f"run while signed out: {'yes' if on else 'no'}")
@@ -521,9 +580,8 @@ class App:
             login = self.add_login()
         say("\nStep 2: check the PC clock.")
         say("  " + clock.report()[1])
-        say("\nStep 3: run even when you're signed out?")
-        say("  If yes, Windows will ask for your Windows password to store with the scheduled tasks. "
-            "Work PCs often don't allow this; then bookings run while you're signed in (the screen can be locked).")
+        say("\nStep 3: run while signed out?")
+        say(SIGNED_OUT_HELP)
         on = yes("  Run while signed out?", False)
         config.set_setting(self.doc, "run_signed_out", on)
         self.commit(f"run while signed out: {'yes' if on else 'no'}")
