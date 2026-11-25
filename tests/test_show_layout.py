@@ -21,7 +21,7 @@ def test_layout_matches_the_agreed_example():
         "Tue 6:00 AM singles with Andrea",
         "  Every Tuesday, 6:00 to 6:30 AM, singles with Andrea Kronberg",
         "  Courts: 2, then 3, then any.  Login: me",
-        "  Next runs (courts open 1 week + 1 hour ahead):",
+        "  Next runs, every week until you remove or pause it (courts open 1 week + 1 hour ahead):",
         "    Tue 12/1 at 5:00 AM  books Tue 12/8, 6:00 AM   (PC on by 3:45 AM)",
         "    Tue 12/8 at 5:00 AM  books Tue 12/15, 6:00 AM  (PC on by 3:45 AM)",
         "  Scheduled task: ready (runs while you're signed in to Windows)",
@@ -50,3 +50,8 @@ def test_missing_task_warns_and_signed_out_task_says_so():
     assert any("Warning: no scheduled task" in x for x in booking_lines(weekly(), NOW, None))
     lines = booking_lines(weekly(), NOW, {"state": "Ready", "logon": "Password"})
     assert lines[-1] == "  Scheduled task: ready (runs even when you're signed out)"
+
+
+def test_one_off_heading_says_it_runs_once():
+    b = weekly(day=None, date=date(2026, 12, 19))
+    assert "  Runs once (courts open 1 week + 1 hour ahead):" in booking_lines(b, NOW, None)

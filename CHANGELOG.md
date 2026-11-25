@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- Menu 1 says how often a booking runs: "Next runs, every week until you remove or pause it" for a weekly booking, or "Runs once" for a one-off. The two runs listed are only the next ones.
+
 ## 0.1.5
 
 - **Clearer layout for menu 1 (Show my bookings):** each booking says what it books ("Every Tuesday, 6:00 to 6:30 AM, singles with ..."), its courts in order and its login. Under "Next runs (courts open 1 week + 1 hour ahead)", each line pairs the moment the app books with the court time it books, and when the PC must be on. That time shows its date when it falls on the day before. The task line says "Scheduled task".
