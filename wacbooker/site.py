@@ -100,10 +100,13 @@ JS_DIALOG = r"""(court) => {
 
 # The participants page's member table: one row per person, cells Name, Relationship
 # (Main = the signed-in member, Spouse/Child/... = family on the account, Buddy).
+# Rows are the ones with a member checkbox; each gives its cells that have text, so a
+# leading checkbox-only cell doesn't shift the columns: [name, relationship, ...].
 JS_PARTICIPANTS = r"""() => { const g = document.querySelector('table[id$="ctrlMemberBuddy_gridViewMembers"]');
   if (!g) return null;
-  return Array.from(g.querySelectorAll('tr')).map(tr => Array.from(tr.querySelectorAll('td'))
-    .map(td => (td.innerText || '').replace(/\s+/g, ' ').trim())).filter(c => c.length >= 2 && c[0]); }"""
+  return Array.from(g.querySelectorAll('tr')).filter(tr => tr.querySelector('input[id$="_chkMember"]'))
+    .map(tr => Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || '').replace(/\s+/g, ' ').trim())
+      .filter(t => t)).filter(c => c.length >= 2); }"""
 
 
 def family_from(cells: list[list[str]], me: str = "") -> list[str]:
@@ -539,10 +542,16 @@ class ClubSite:
         on the club site that shows them). Never fails the caller."""
         try:
             cells = await self.wait_for(JS_PARTICIPANTS, wait, 0.5)
-            fam = family_from(cells or [], self.member_name)
             if cells:
-                self.family = fam
-                self.log(f"family on the account: {len(fam)}")
+                self.family = family_from(cells, self.member_name)
+                self.log(f"member table: {len(cells)} rows; family on the account: {len(self.family)}")
+            else:
+                shape = await self.js(r"""() => { const g = document.querySelector('table[id$="ctrlMemberBuddy_gridViewMembers"]');
+                    if (!g) return 'no member table';
+                    const tr = Array.from(g.querySelectorAll('tr'))[1];
+                    return 'member table, ' + g.querySelectorAll('tr').length + ' rows; row 2 cells: ' +
+                      (tr ? Array.from(tr.children).map(c => c.tagName + '[' + (c.innerText || '').trim().length + ']').join(' ') : 'none'); }""")
+                self.log(f"no member rows read ({shape})")
         except Exception as e:  # noqa: BLE001
             self.log(f"couldn't read family members: {why(e)}")
 

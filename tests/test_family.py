@@ -10,6 +10,14 @@ def test_family_is_everyone_but_main_and_buddies():
     assert family_from(CELLS, "Pat Member") == ["Alex Member", "Sam Member"]
 
 
+def test_rows_as_the_page_gives_them_after_dropping_empty_cells():
+    # The page's first cell is the checkbox alone; the reader drops empty cells, so
+    # each row arrives as [name, relationship] (sometimes with more cells after).
+    cells = [["Brian Kronberg", "Main"], ["Andrea Kronberg", "Spouse"], ["Nate Marshall", "Buddy"],
+             ["Kid Kronberg", "Child", "extra"]]
+    assert family_from(cells, "Brian Kronberg") == ["Andrea Kronberg", "Kid Kronberg"]
+
+
 def test_no_member_table_means_no_family():
     assert family_from([], "Pat Member") == []
     assert family_from(None, "") == []

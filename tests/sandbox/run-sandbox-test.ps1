@@ -107,7 +107,7 @@ Set-Content (Join-Path $inDir 'expected-version.txt') $version
 Remove-Item (Join-Path $inDir 'interactive.txt'), (Join-Path $inDir 'update.txt') -ErrorAction SilentlyContinue
 if ($HandsOn) { Set-Content (Join-Path $inDir 'interactive.txt') 'hands-on' }
 if ($Reuse) { Set-Content (Join-Path $inDir 'update.txt') "update-$stamp" }
-foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
+foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py', 'cleanup_old.py') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
 
 $config = Join-Path $run 'test.wsb'
 @"

@@ -143,8 +143,17 @@ try {
 
     # 4b. Signed-in checks, read-only, with the login a person typed into the wizard: in
     #     hands-on mode, or in update mode when an earlier hands-on run left one here.
+    # Earlier versions of this test put their login and bookings in the person's own app
+    # folder. Take them out (and their tasks), so only what the person added remains.
+    $clean = Run-Native $vpy @((Join-Path $in 'cleanup_old.py')) 'cleanup.txt'
+    if ($clean.text -match 'removed') {
+        Run-Native $exe @('rebuild-tasks') 'cleanup-rebuild-tasks.txt' | Out-Null
+        Log "removed an earlier run's test login and bookings from the app folder"
+    }
+
     $nick = $null
-    $firstLogin = "$(& $vpy -c "from wacbooker import config; d, c = config.load(); print(next((x.nickname for x in c.logins if x.nickname != 'sandbox'), ''))")".Trim()
+    $loginInfo = "$(& $vpy -c "from wacbooker import config; d, c = config.load(); x = c.logins[0] if c.logins else None; print(f'{x.nickname}|{x.username}' if x else '|')")".Trim()
+    $firstLogin, $nickUser = $loginInfo -split '\|', 2
     if ($update -and $firstLogin -and $st.passwords_reachable.$firstLogin -eq $true) { $nick = $firstLogin }
     if ($interactive -or $nick) {
         $nick = $firstLogin
@@ -160,12 +169,25 @@ try {
         Rec 'clock' ($r.code -eq 0) ($r.text.Trim() -split "`n" | Select-Object -Last 1)
     }
 
-    # 5. A booking (login without a password), checked and scheduled. In hands-on mode
-    #    also a PAUSED booking on the real login, used only for the dry run.
+    # 5. Test bookings, checked and scheduled. They live in a scratch app folder with
+    #    their own task folder, never in the app folder the person uses, so the menu
+    #    only ever shows the logins and bookings they added themselves:
+    #    - login "test-no-password" (no password) with booking "Sandbox check";
+    #    - with a signed-in login, a PAUSED booking "Sandbox dry run" on it, for the dry run
+    #      (same username, so its password comes from Credential Manager as usual).
+    $realConfig = Join-Path $app 'bookings.yaml'
+    $realBefore = if (Test-Path $realConfig) { (Get-FileHash $realConfig).Hash } else { '' }
+    $scratch = 'C:\wacb-test-home'
+    New-Item -ItemType Directory -Force $scratch | Out-Null
+    if (-not (Test-Path (Join-Path $scratch 'browsers'))) {
+        cmd.exe /c "mklink /J `"$scratch\browsers`" `"$app\browsers`"" | Out-Null   # the same app browser
+    }
+    $env:WACB_HOME = $scratch
+    $env:WACB_TASK_FOLDER = '\WAC Court Booker\Test\'
     $mbArgs = @((Join-Path $in 'make_booking.py'))
-    if ($nick) { $mbArgs += @('--dry-login', $nick) }
+    if ($nick) { $mbArgs += @('--dry-login', $nick, '--dry-user', $nickUser) }
     $r = Run-Native $vpy $mbArgs 'make-booking.txt'
-    Rec 'write bookings.yaml' ($r.code -eq 0) $r.text.Trim()
+    Rec 'write test bookings (scratch folder)' ($r.code -eq 0) $r.text.Trim()
     if ($nick) {
         $r = Run-Native $exe @('dry-run', '--booking', 'Sandbox dry run') 'dry-run.txt'
         Rec 'dry-run (read-only)' ($r.code -eq 0 -and $r.text -match 'show open|would go|no court') (($r.text -split "`n" | Where-Object { $_ -match 'min at|would go|Stopped' }) -join ' | ')
@@ -173,7 +195,7 @@ try {
     $r = Run-Native $exe @('check') 'check.txt'
     Rec 'check' ($r.code -eq 0 -and $r.text -match 'Sandbox check') "exit $($r.code)"
     $r = Run-Native $exe @('rebuild-tasks') 'rebuild-tasks.txt'
-    $all = @(Get-ScheduledTask -TaskPath '\WAC Court Booker\' -ErrorAction SilentlyContinue)
+    $all = @(Get-ScheduledTask -TaskPath '\WAC Court Booker\Test\' -ErrorAction SilentlyContinue)
     foreach ($t in $all) { Export-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath | Set-Content (Join-Path $out "task-$($t.TaskName).xml") -Encoding UTF8 }
     $tasks = @($all | Where-Object { $_.TaskName -eq 'Booking - Sandbox check' })
     $dryOff = $true
@@ -183,7 +205,7 @@ try {
 
     # 6. Task Scheduler starts the booking the way it would on the day. With no password
     #    it must stop with a plain "Not booked" result before touching the club site.
-    $resultsFile = Join-Path $app 'results.jsonl'
+    $resultsFile = Join-Path $scratch 'results.jsonl'
     if ($tasks.Count -ge 1) {
         $n0 = if (Test-Path $resultsFile) { @(Get-Content $resultsFile).Count } else { 0 }
         Start-ScheduledTask -TaskName $tasks[0].TaskName -TaskPath $tasks[0].TaskPath
@@ -199,11 +221,18 @@ try {
     # 7. The menu, driven by typed answers: show bookings, Enter, quit.
     $r = Run-Native $exe @('menu') 'menu.txt' "1`r`n`r`n0`r`n"
     Rec 'menu (show bookings, quit)' ($r.code -eq 0 -and $r.text -match 'Sandbox check') "exit $($r.code)"
+    Remove-Item Env:\WACB_HOME, Env:\WACB_TASK_FOLDER
+
+    # 7b. None of that touched the person's own app folder or tasks.
+    $realAfter = if (Test-Path $realConfig) { (Get-FileHash $realConfig).Hash } else { '' }
+    $stray = @(Get-ScheduledTask -TaskPath '\WAC Court Booker\' -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like 'Booking - Sandbox*' })
+    $leak = if (Test-Path $realConfig) { (Get-Content $realConfig -Raw) -match 'test-no-password|nickname: sandbox|Sandbox check|Sandbox dry run' } else { $false }
+    Rec 'own app folder untouched by tests' ($realBefore -eq $realAfter -and -not $leak -and -not $stray.Count) "bookings.yaml unchanged=$($realBefore -eq $realAfter), test entries in it=$leak, test tasks in the real folder=$($stray.Count)"
 
     # 8. Running setup again updates in place and keeps the bookings.
     $code = Run-Setup 'setup-console-2.txt'
-    $kept = (Get-Content (Join-Path $app 'bookings.yaml') -Raw) -match 'Sandbox check'
-    Rec 'setup.cmd again (update)' ($code -eq 0 -and $kept) "exit $code, bookings kept=$kept"
+    $kept = ((Test-Path $realConfig) -and (Get-FileHash $realConfig).Hash -eq $realAfter) -or (-not $realAfter)
+    Rec 'setup.cmd again (update)' ($code -eq 0 -and $kept) "exit $code, bookings.yaml kept=$kept"
 
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null
@@ -219,6 +248,7 @@ catch {
 finally {
     foreach ($f in 'logs\wac-booker.log', 'results.jsonl', 'bookings.yaml') {
         Copy-Item (Join-Path $app $f) $out -ErrorAction SilentlyContinue
+        Copy-Item (Join-Path 'C:\wacb-test-home' $f) (Join-Path $out ("test-" + (Split-Path $f -Leaf))) -ErrorAction SilentlyContinue
     }
     $failed = @($results | Where-Object { -not $_.ok }).Count
     ConvertTo-Json -InputObject @{ passed = $results.Count - $failed; failed = $failed } |

@@ -131,6 +131,20 @@ try {
     Step "App environment"
     $venv = Join-Path $app 'venv'
     $vpy = Join-Path $venv 'Scripts\python.exe'
+    # An update can't replace the app's files while the app runs (the menu, or a booking).
+    # Never stop it: ask, and carry on by itself once it's closed.
+    $venvDir = (Join-Path $venv '') -replace '\\$', ''
+    function Get-AppProcess {
+        @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.Path -and $_.Path.StartsWith($venvDir + '\', [StringComparison]::OrdinalIgnoreCase) })
+    }
+    if ((Get-AppProcess).Count) {
+        Write-Host "WAC Court Booker is open. Close its menu window to continue (if a booking is running, wait for it to finish)." -ForegroundColor Yellow
+        $until = (Get-Date).AddMinutes(5)
+        while ((Get-AppProcess).Count -and (Get-Date) -lt $until) { Start-Sleep 2 }
+        if ((Get-AppProcess).Count) { throw "WAC Court Booker is still open. Close it, then run setup.cmd again." }
+        Write-Host "Closed. Carrying on."
+    }
     if ((Test-Path $vpy) -and -not (Test-Python $vpy)) {
         Write-Host "The app's Python environment is broken (Python was updated or removed); rebuilding it."
         Remove-Item -Recurse -Force $venv
