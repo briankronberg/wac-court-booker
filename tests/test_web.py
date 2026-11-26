@@ -231,3 +231,27 @@ def test_job_questions_wait_for_the_page(srv, monkeypatch):
         time.sleep(0.05)
     assert j["job"]["done"] and j["job"]["ok"] and answers == [False]
     assert j["job"]["lines"] == ["Booked Ct 2.", "Cancelled."]
+
+
+def test_desktop_shortcut_points_at_the_window(srv, monkeypatch, tmp_path):
+    exe = tmp_path / "Scripts" / "wac-booker-web.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    link = tmp_path / "Desktop" / "WAC Court Booker.lnk"
+    link.parent.mkdir()
+    monkeypatch.setattr(web, "web_exe", lambda: exe)
+    monkeypatch.setattr(web, "desktop_shortcut_path", lambda: link)
+    seen = {}
+
+    def fake_run(cmd, env=None, **k):
+        seen.update(env)
+        link.write_bytes(b"lnk")
+        return web.subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(web.subprocess, "run", fake_run)
+    monkeypatch.setattr(scheduler, "pwsh", lambda: "pwsh")
+    assert call(srv, "/api/state")[1]["settings"]["desktop_shortcut"] is False
+    _, r = call(srv, "/api/desktop-shortcut", {})
+    assert r["ok"], r
+    assert seen["WACB_TARGET"] == str(exe) and seen["WACB_LNK"] == str(link)
+    assert (tmp_path / "desktop-shortcut.txt").read_text().strip() == "Yes"
+    assert call(srv, "/api/state")[1]["settings"]["desktop_shortcut"] is True

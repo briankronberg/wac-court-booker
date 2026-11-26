@@ -8,6 +8,9 @@
 - Club-site checks (test sign-in, buddy list, family, court sheet, test booking) show their progress in the window. The test booking's questions are Yes/No buttons.
 - The window is a page served only to this PC (127.0.0.1) and locked with a random key. It stops a few minutes after you close it, and setup closes it before updating.
 - `wac-booker menu` still opens the text menu.
+- **Settings → Desktop shortcut** puts a shortcut to the window on the desktop, or makes it again (for example if an old one opens the text menu).
+- My bookings explains the booking limits: at most 1 week and 1 hour ahead, and primetime courts only 24 hours ahead.
+- About shows who made the app, with a link to its GitHub page.
 - Sandbox test: the desktop-shortcut checks are gone; it checks the page server instead.
 
 ## 0.1.8

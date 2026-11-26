@@ -12,6 +12,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -191,7 +192,8 @@ class WebApp:
             "bookings": [booking_view(b, now, tasks.get(scheduler.task_name(b.name))) for b in cfg.bookings],
             "settings": {"browser": cfg.browser, "show_window": cfg.show_window,
                          "run_signed_out": cfg.run_signed_out, "wake_timers": scheduler.wake_timers_on(),
-                         "windows_password_held": bool(self.windows_password)},
+                         "windows_password_held": bool(self.windows_password),
+                         "desktop_shortcut": desktop_shortcut_path().exists()},
             "other_timezone": local.utcoffset() != now.utcoffset(),
             "courts": list(config.COURTS),
             "job": self.job.view() if self.job else None,
@@ -543,12 +545,57 @@ class WebApp:
         self.update_cache = (time.time(), out)
         return out
 
+    def desktop_shortcut(self) -> dict:
+        """(Re)create the desktop shortcut to this window, and remember the choice for setup."""
+        target = web_exe()
+        if not target.exists():
+            raise UserError("Couldn't find the app's program. Run setup.cmd again.")
+        link = desktop_shortcut_path()
+        env = dict(os.environ, WACB_LNK=str(link), WACB_TARGET=str(target), WACB_DIR=str(paths.home()),
+                   WACB_ARGS=f'--home "{paths.home()}"' if os.environ.get("WACB_HOME") else "")
+        script = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:WACB_LNK); "
+                  "$s.TargetPath = $env:WACB_TARGET; $s.Arguments = $env:WACB_ARGS; "
+                  "$s.WorkingDirectory = $env:WACB_DIR; "
+                  "$s.Description = 'Book WAC Hartland tennis courts when each booking window opens'; $s.Save()")
+        try:
+            r = subprocess.run([scheduler.pwsh(), "-NoProfile", "-NonInteractive", "-Command", script],
+                               env=env, capture_output=True, text=True, timeout=60,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+            raise UserError(f"Couldn't make the shortcut: {e}") from e
+        if r.returncode or not link.exists():
+            _log(f"desktop shortcut failed: {(r.stderr or r.stdout)[:300]}")
+            raise UserError("Couldn't make the desktop shortcut. See the log for details.")
+        try:  # setup reads this, so updates keep refreshing the shortcut
+            (paths.home() / "desktop-shortcut.txt").write_text("Yes\n", encoding="utf-8")
+        except OSError:
+            pass
+        return {"ok": True}
+
     def open_log(self) -> dict:
         p = paths.log_file()
         if not p.exists():
             raise UserError("There's no log yet.")
         os.startfile(str(p))  # noqa: S606 - opens in Notepad
         return {"ok": True}
+
+
+def web_exe() -> Path:
+    """wac-booker-web.exe next to this Python (the venv's Scripts folder)."""
+    return Path(sys.executable).parent / "wac-booker-web.exe"
+
+
+def desktop_shortcut_path() -> Path:
+    desk = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
+    try:  # the real Desktop folder, which OneDrive can move
+        import ctypes
+        from ctypes import wintypes
+        buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf) == 0 and buf.value:
+            desk = Path(buf.value)
+    except (AttributeError, OSError):
+        pass
+    return desk / "WAC Court Booker.lnk"
 
 
 class UserError(Exception):
@@ -643,6 +690,7 @@ def make_handler(app: WebApp, token: str, port_ref: list[int]):
                 "/api/job": lambda: app.start_job(body),
                 "/api/job/answer": lambda: app.job_answer(body),
                 "/api/open-log": app.open_log,
+                "/api/desktop-shortcut": app.desktop_shortcut,
                 "/api/heartbeat": lambda: {"ok": True, "busy": app.busy()},
                 "/api/quit": app.quit,
             }
