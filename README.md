@@ -42,6 +42,13 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
 
 The club allows 2 reservations per login per day. The app warns when a day would go over that and refuses bookings that overlap on one login.
 
+### Prime Time
+
+Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:00-8:00 PM. In those hours the club opens **singles** courts only 24 hours ahead; doubles still book 1 week and 1 hour ahead (see the [WAC Tennis FAQ](https://www.thewac.com/sports/tennis/tennis-faq/)). The app follows that:
+
+- A singles booking entirely in Prime Time is booked 24 hours ahead.
+- A singles booking that runs into or out of Prime Time (for example Monday 8:00-9:30 AM) is booked in two parts: the regular hours a week ahead (8:00-9:00), then the Prime Time part 24 hours ahead (9:00-9:30), on the same court if it's free. If the first part isn't booked, the second isn't tried. Each part counts toward the 2 reservations a day. Prime Time is often taken by lessons, so the second part may not get a court. The booking form warns about this and offers nearby times that stay on one side.
+
 ## The config file
 
 The menu writes `%LOCALAPPDATA%\WAC Court Booker\bookings.yaml`. You can edit it by hand: it's commented, and the app explains any mistake in plain words. The scheduled tasks pick up hand edits at their next run, and **Settings → Rebuild scheduled tasks** updates the run times.

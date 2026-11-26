@@ -22,6 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("setup", help="first-run setup wizard")
     r = sub.add_parser("run", help="run one booking now (what the scheduled task does)")
     r.add_argument("--booking", required=True)
+    r.add_argument("--part", choices=("main", "prime"), default="main",
+                   help="prime: the Prime Time part of a split singles booking")
     sub.add_parser("check", help="check bookings.yaml and list next run times")
     t = sub.add_parser("test-login", help="sign in with a login (read-only)")
     t.add_argument("--login")
@@ -72,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         return web.run(open_page=not args.no_open, port=args.port,
                        print_url=lambda u: print(f"Open {u}", flush=True))
     if cmd == "run":
-        return runner.run_booking(args.booking)
+        return runner.run_booking(args.booking, args.part)
     if cmd == "version":
         print(__version__)
         return 0

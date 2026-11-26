@@ -9,8 +9,12 @@
 - The window is a page served only to this PC (127.0.0.1) and locked with a random key. It stops a few minutes after you close it, and setup closes it before updating.
 - `wac-booker menu` still opens the text menu.
 - **Settings → Desktop shortcut** puts a shortcut to the window on the desktop, or makes it again (for example if an old one opens the text menu).
-- My bookings explains the booking limits: at most 1 week and 1 hour ahead, and primetime courts only 24 hours ahead.
-- About shows who made the app, with a link to its GitHub page.
+- **Prime Time** (Monday-Friday 9:00-10:30 AM, Monday-Thursday 5:00-8:00 PM), where the club opens singles courts only 24 hours ahead:
+  - Singles entirely in Prime Time are now booked 24 hours ahead instead of a week ahead. Doubles are unchanged.
+  - Singles that run into or out of Prime Time are booked in two parts: the regular hours a week ahead, then the Prime Time part 24 hours ahead on the same court if it's free (only if the first part was booked). Each part counts toward the 2 reservations a day.
+  - The booking form warns when a singles time touches Prime Time and offers nearby times that stay on one side. Each booking card says how Prime Time affects it.
+- My bookings explains the booking limits and lists the Prime Time hours.
+- About shows who made the app, with links to its GitHub page and the WAC Tennis FAQ.
 - Sandbox test: the desktop-shortcut checks are gone; it checks the page server instead.
 
 ## 0.1.8

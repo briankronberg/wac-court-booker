@@ -425,17 +425,21 @@ function problemsBanner() {
 function renderHome(el) {
   const bk = S.bookings;
   let h = problemsBanner();
-  h += `<div class="page-head"><div><h2>My bookings</h2><p class="muted" style="margin:4px 0 0">Scheduled court bookings. Note: courts can be booked at most 1 week and 1 hour prior. Primetime courts can be booked only 24 hours prior.</p></div>
+  h += `<div class="page-head"><div><h2>My bookings</h2><p class="muted" style="margin:4px 0 0">Scheduled court bookings. Note: courts can be booked at most 1 week and 1 hour prior. Primetime courts can be booked only 24 hours prior.</p>
+        <p class="muted small" style="margin:4px 0 0">Primetime hours: Monday-Friday 9:00am-10:30am | Monday-Thursday 5:00pm-8:00pm. The 24-hour rule is for singles; doubles can book a week and an hour ahead.</p></div>
         <button class="btn primary big" id="add" type="button">＋ Book a court</button></div>`;
   if (!bk.length) {
     h += `<div class="card empty"><svg class="ball" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="var(--ball)"/><path d="M5 9c6 3 6 11 0 14M27 9c-6 3-6 11 0 14" stroke="#fff" stroke-width="2" fill="none"/></svg>
       <h3>No bookings yet</h3><p class="muted">Press <b>Book a court</b> to set up your first one. It takes about a minute.</p></div>`;
   }
   bk.forEach((b, i) => {
-    const runs = b.runs.map((r) => `<li><span class="when">${esc(r.plays)}</span><br><span class="muted small">The app books it ${esc(r.books)}. Have the PC on (asleep is fine) by ${esc(r.pc_on)}.</span></li>`).join("");
+    const runs = b.runs.map((r) => `<li><span class="when">${esc(r.plays)}</span><br><span class="muted small">${r.books_prime
+      ? `The app books ${esc(r.books)}, then the Prime Time part, ${esc(r.books_prime)}.`
+      : `The app books it ${esc(r.books)}.`} Have the PC on (asleep is fine) by ${esc(r.pc_on)}.</span></li>`).join("");
     h += `<article class="card ${b.active ? "" : "paused"}">
       <div class="card-head"><h3>${esc(b.title)}</h3><span class="pill ${b.active ? "on" : "off"}">${b.active ? "On" : "Paused"}</span></div>
       <div class="facts"><div>${esc(b.who)}</div><div class="muted">${esc(b.courts_text)}${S.logins.length > 1 ? ` · login ${esc(b.login)}` : ""}</div></div>
+      ${b.prime ? `<div class="banner ${b.prime.kind === "split" ? "warn" : "info"}" style="margin:10px 0 0"><p class="small" style="margin:0">${esc(b.prime.text)}</p></div>` : ""}
       ${runs ? `<div class="next"><h4>${b.weekly ? "Coming up (it repeats every week)" : "Coming up (just this once)"}</h4><ul>${runs}</ul></div>` : ""}
       ${b.skipping.length ? `<div class="task">Skipping: ${esc(b.skipping.join(", "))}</div>` : ""}
       <div class="task ${b.task.ok ? "muted" : "bad"}">${esc(b.task.text)}</div>
@@ -510,7 +514,58 @@ function summaryText(f) {
   else { const d = new Date(f.date + "T12:00:00"); when = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }); }
   const courts = f.courts.length ? `Court ${f.courts.join(", then ")}${f.any ? ", then any other court" : ""}` : "Any court";
   const shorter = f.shorter_ok && f.length > 30 ? `, or shorter if no court has ${f.length} minutes` : "";
-  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${f.play === "singles" ? "Singles" : "Doubles"} with ${namesText(f.partners)}. ${courts}.` };
+  const pt = primeOf(f);
+  const how = !pt ? "" : pt.kind === "all" ? " Prime Time singles: the app books it 24 hours ahead."
+    : ` Books in two parts: ${spanText(pt.main.start, pt.main.length)} a week ahead, ${spanText(pt.prime.start, pt.prime.length)} 24 hours ahead.`;
+  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${f.play === "singles" ? "Singles" : "Doubles"} with ${namesText(f.partners)}. ${courts}.${how}` };
+}
+
+// Prime Time (the club's FAQ). Singles in these hours can only be booked 24 hours ahead.
+function primeSpans(wd) { return ((S.prime_time || {}).spans || []).filter(([days]) => days.includes(wd)).map(([, a, z]) => [a, z]); }
+function splitPrime(wd, start, len) {
+  const cuts = new Set([start, start + len]);
+  for (const [a, z] of primeSpans(wd)) for (const c of [a, z]) if (c > start && c < start + len) cuts.add(c);
+  const e = [...cuts].sort((x, y) => x - y), out = [];
+  for (let i = 0; i + 1 < e.length; i++) {
+    const prime = primeSpans(wd).some(([a, z]) => a <= e[i] && e[i + 1] <= z);
+    if (out.length && out[out.length - 1].prime === prime) out[out.length - 1].length += e[i + 1] - e[i];
+    else out.push({ start: e[i], length: e[i + 1] - e[i], prime });
+  }
+  return out;
+}
+function formWeekday(f) {
+  if (f.weekly) return f.day;
+  if (!f.date) return null;
+  return (new Date(f.date + "T12:00:00").getDay() + 6) % 7;
+}
+// null (not Prime Time, or doubles), {kind:"all"} or {kind:"split", main, prime}.
+function primeOf(f) {
+  const wd = formWeekday(f);
+  if (f.play !== "singles" || wd === null || f.time === null) return null;
+  const p = splitPrime(wd, f.time, f.length);
+  if (p.length === 1) return p[0].prime ? { kind: "all" } : null;
+  return { kind: "split", main: p.find((x) => !x.prime), prime: p.find((x) => x.prime) };
+}
+// Times close to the chosen one that stay all inside or all outside Prime Time.
+function primeFixes(f) {
+  const wd = formWeekday(f), pt = primeOf(f);
+  if (!pt || pt.kind !== "split") return [];
+  const out = [], seen = new Set();
+  const add = (start, len) => {
+    const k = start + "/" + len;
+    if (seen.has(k) || start < 5 * 60 || start > 21 * 60 + 30 || ![30, 60, 90].includes(len)) return;
+    const p = splitPrime(wd, start, len);
+    if (p.length !== 1) return;
+    seen.add(k);
+    out.push({ start, len, label: `${spanText(start, len)}`, sub: p[0].prime ? "Prime Time, books 24 hours ahead" : "Books a week ahead" });
+  };
+  const [pa, pz] = primeSpans(wd).find(([a, z]) => a < pt.prime.start + pt.prime.length && pt.prime.start < z);
+  const before = pt.main.start < pt.prime.start;
+  add(before ? pa - f.length : pz, f.length);       // same length, moved out of Prime Time
+  add(pt.main.start, pt.main.length);                // just the regular part
+  add(before ? pa : pz - f.length, f.length);        // same length, all in Prime Time
+  add(pt.prime.start, pt.prime.length);              // just the Prime Time part
+  return out.slice(0, 3);
 }
 
 function renderForm(el) {
@@ -546,8 +601,9 @@ function renderForm(el) {
   h += sec("How often?", `<div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>`);
   if (f.weekly) h += sec("Which day?", `<div class="choices">${DAYS.map((d, i) => choice("day", i, d.slice(0, 3), "")).join("")}</div>`);
   else {
-    const min = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
-    h += sec("Which date?", `<input type="date" id="f-date" min="${min}" value="${esc(f.date || "")}">`, "More than a week away. For sooner dates, book on the club site.");
+    const min = new Date(Date.now() + (f.play === "singles" ? 1 : 7) * 864e5).toISOString().slice(0, 10);
+    h += sec("Which date?", `<input type="date" id="f-date" min="${min}" value="${esc(f.date || "")}">`,
+      f.play === "singles" ? "More than a week away (or more than a day away for Prime Time). For sooner dates, book on the club site." : "More than a week away. For sooner dates, book on the club site.");
   }
   const times = []; for (let m = 5 * 60; m <= 21 * 60 + 30; m += 30) times.push(m);
   h += sec("What time do you start?", `<select id="f-time" aria-label="Start time"><option value="">Choose a time</option>${times.map((m) => `<option value="${m}" ${f.time === m ? "selected" : ""}>${fmtTime(m)}</option>`).join("")}</select>`);
@@ -557,6 +613,16 @@ function renderForm(el) {
      <label class="check" style="margin-top:8px"><input type="checkbox" id="f-any" ${f.any ? "checked" : ""}> Any other court if ${f.courts.length ? "those are" : "none is chosen or they're"} taken</label>`,
     "Press courts in the order you like them: first choice first. Press again to take one off. Choosing none means any court.");
   h += `</div>`;
+  const pt = primeOf(f);
+  if (pt && pt.kind === "all") {
+    h += `<div class="banner info" style="margin-top:14px"><b>This is Prime Time.</b> The club opens singles courts at this time only 24 hours ahead, so the app books it then, not a week ahead. Doubles can still book a week ahead.</div>`;
+  } else if (pt) {
+    const fixes = primeFixes(f);
+    h += `<div class="banner warn" style="margin-top:14px"><h3 style="margin-top:0">Part of this time is Prime Time</h3>
+      <p>${esc(spanText(pt.prime.start, pt.prime.length))} is Prime Time (${esc((S.prime_time || {}).text || "")}). The club opens singles courts then only 24 hours ahead, and lessons often take them.</p>
+      <p>If you keep this time, the app books it in two parts: ${esc(spanText(pt.main.start, pt.main.length))} a week ahead, then ${esc(spanText(pt.prime.start, pt.prime.length))} 24 hours ahead, on the same court if it's free. The second part may not get a court.</p>
+      ${fixes.length ? `<p><b>For the best chance, pick a time that stays on one side:</b></p><div class="choices">${fixes.map((x, i) => `<button type="button" class="choice" data-fix="${i}">${esc(x.label)}<small>${esc(x.sub)}</small></button>`).join("")}</div>` : ""}</div>`;
+  }
   const s = summaryText(f);
   h += `<div class="summary">${f.errors.length ? `<ul class="errors">${f.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
     <p>${s.ok ? "<b>You're booking:</b> " : ""}${esc(s.text)}</p>
@@ -602,6 +668,12 @@ function renderForm(el) {
     const c = +b.dataset.court, i = f.courts.indexOf(c);
     if (i >= 0) f.courts.splice(i, 1); else f.courts.push(c);
     render();
+  }));
+  const fixes = primeFixes(f);
+  el.querySelectorAll("[data-fix]").forEach((b) => (b.onclick = () => {
+    const x = fixes[+b.dataset.fix];
+    f.time = x.start; f.length = x.len; if (f.length === 30) f.shorter_ok = false;
+    f.errors = []; render(); toast(`Changed to ${x.label}.`);
   }));
   $("#f-save").onclick = saveForm;
 }
@@ -689,7 +761,8 @@ function renderSettings(el) {
 
   h += `<div class="card"><h3>About</h3><p>WAC Court Booker ${esc(S.version)}. <button class="linkish" id="upd2" type="button">Check for updates</button></p>
     <p class="small muted">Settings file: ${esc(S.config_file)}</p><button class="btn" id="log2" type="button">Open the log</button>
-    <p class="small" style="margin-top:12px"><a href="https://github.com/briankronberg/wac-court-booker" target="_blank" rel="noopener">WAC Court Booker</a>: created by Brian Kronberg.</p></div>`;
+    <p class="small" style="margin-top:12px"><a href="https://github.com/briankronberg/wac-court-booker" target="_blank" rel="noopener">WAC Court Booker</a>: created by Brian Kronberg.</p>
+    <p class="small"><a href="https://www.thewac.com/sports/tennis/tennis-faq/" target="_blank" rel="noopener">WAC Tennis FAQ</a>: reservation rules, Prime Time hours and cancellations.</p></div>`;
   el.innerHTML = h;
 
   bindLoginForm("s");

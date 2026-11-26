@@ -69,7 +69,24 @@ def courts_text(courts: list) -> str:
     return out + (", then any court" if "any" in courts else "")
 
 
-def booking_view(b: Booking, now: datetime, task: dict | None) -> dict:
+def prime_note(b: Booking) -> dict | None:
+    """How Prime Time changes this booking, in plain words (singles only)."""
+    kind = b.prime_kind
+    if kind == "none":
+        return None
+    if kind == "all":
+        return {"kind": "all", "text": "Prime Time singles: the club opens these courts only 24 hours "
+                                       "ahead, so the app books it then, not a week ahead."}
+    main, prime = b.part("main"), b.part("prime")
+    return {"kind": "split", "text": (
+        f"{span_text(prime.time, prime.length)} is Prime Time, when the club opens singles courts only "
+        f"24 hours ahead. So the app books this in two parts: {span_text(main.time, main.length)} a week "
+        f"ahead, then {span_text(prime.time, prime.length)} 24 hours ahead, on the same court if it's free. "
+        f"Prime Time is often taken by lessons. For the best chance, change the time so the booking is "
+        f"all inside or all outside Prime Time.")}
+
+
+def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict | None = None) -> dict:
     weekly = b.day is not None
     when = f"Every {clubtime.DAYS[b.day]}" if weekly else f"{b.date:%A}, {b.date:%B} {b.date.day}"
     v: dict[str, Any] = {
@@ -82,14 +99,22 @@ def booking_view(b: Booking, now: datetime, task: dict | None) -> dict:
         "courts_text": courts_text(b.courts) + (f". Shorter if no court has {b.length} minutes."
                                                 if b.shorter_ok else "."),
         "weekly": weekly,
+        "prime": prime_note(b),
     }
     runs = []
+    split = b.prime_kind == "split"
     for o in b.next_runs(now - clubtime.LATE_OK, 2):
         on = o.run_at
         pc = clubtime.fmt_time(on.hour * 60 + on.minute)
         if on.date() != o.window.date():
             pc = f"{md(on.date())}, {pc}"
-        runs.append({"plays": when_text(o.start), "books": when_text(o.window), "pc_on": pc})
+        r = {"plays": when_text(clubtime.slot_start(o.day, b.time)), "books": when_text(o.window), "pc_on": pc}
+        if split:
+            main, prime = b.part("main"), b.part("prime")
+            pw = clubtime.window_open(clubtime.slot_start(o.day, prime.time), prime.lead)
+            r["books"] = f"{span_text(main.time, main.length)} on {when_text(o.window)}"
+            r["books_prime"] = f"{span_text(prime.time, prime.length)} on {when_text(pw)}"
+        runs.append(r)
     v["runs"] = runs
     if weekly:
         v["upcoming"] = [{"date": o.day.isoformat(), "label": md(o.day), "skipped": o.day in b.skip}
@@ -101,7 +126,7 @@ def booking_view(b: Booking, now: datetime, task: dict | None) -> dict:
         v["task"] = {"ok": True, "text": "This date has passed. Remove it when you like."}
     elif not b.active:
         v["task"] = {"ok": True, "text": "Paused: nothing books until you turn it back on."}
-    elif not task:
+    elif not task or (split and not prime_task):
         v["task"] = {"ok": False, "text": "Not scheduled yet. Open Settings and press \"Rebuild scheduled tasks\"."}
     else:
         how = ("even when you're signed out" if task.get("logon") == "Password"
@@ -189,7 +214,10 @@ class WebApp:
             "app": APP_NAME, "version": __version__,
             "errors": cfg.errors, "warnings": cfg.warnings, "config_file": str(paths.config_file()),
             "logins": logins,
-            "bookings": [booking_view(b, now, tasks.get(scheduler.task_name(b.name))) for b in cfg.bookings],
+            "bookings": [booking_view(b, now, tasks.get(scheduler.task_name(b.name)),
+                                      tasks.get(scheduler.task_name(b.name, "prime"))) for b in cfg.bookings],
+            "prime_time": {"text": clubtime.PRIME_TEXT,
+                           "spans": [[list(days), a, z] for days, a, z in clubtime.PRIME_TIME]},
             "settings": {"browser": cfg.browser, "show_window": cfg.show_window,
                          "run_signed_out": cfg.run_signed_out, "wake_timers": scheduler.wake_timers_on(),
                          "windows_password_held": bool(self.windows_password),
@@ -284,7 +312,7 @@ class WebApp:
             if old and old.name != config.auto_name(old.play, old.partners, old.day, old.date, old.time, others):
                 b.name = old.name  # a name typed by hand in bookings.yaml stays
             if b.date:
-                w = clubtime.window_open(clubtime.slot_start(b.date, b.time))
+                w = clubtime.window_open(clubtime.slot_start(b.date, b.part().time), b.part().lead)
                 if w < clubtime.now_central() + timedelta(minutes=20):
                     return {"ok": False, "errors": [
                         f"Booking for that date opened {clubtime.fmt_when(w)}, so it's too late for the app. "
