@@ -1,4 +1,4 @@
-# Test driver that runs inside Windows Sandbox, a clean throwaway Windows.
+﻿# Test driver that runs inside Windows Sandbox, a clean throwaway Windows.
 # Windows PowerShell 5.1 syntax on purpose: that's the only PowerShell a clean PC has.
 # Installs the release zip the way a new user would and checks each step. Nothing here
 # signs in to the club site: the only login has no password, so no court can be booked.
@@ -57,17 +57,17 @@ function Run-Setup($logName, [switch]$Wizard, [string]$Extra = '') {
     $log = Join-Path $app 'logs\setup.log'
     $before = if (Test-Path $log) { (Get-Item $log).Length } else { 0 }
     if ($Wizard) {
+        # Setup ends by opening the app's page, which starts with the welcome steps. Wait
+        # there until the person has added a club login (it lands in bookings.yaml).
         $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`"`"" -PassThru -WindowStyle Normal
-        $limit = (Get-Date).AddMinutes(120)
-        $ready = $false
-        while (-not $p.HasExited -and (Get-Date) -lt $limit) {
-            if (-not $ready -and (Get-Process wac-booker -ErrorAction SilentlyContinue)) {
-                $ready = $true
-                Log "READY: the setup wizard is waiting for the club login"
-            }
-            Start-Sleep 2
+        $timedOut = -not $p.WaitForExit(30 * 60 * 1000)
+        if (-not $timedOut) {
+            Log "READY: the app's page is open and waiting for the club login"
+            $cfgFile = Join-Path $app 'bookings.yaml'
+            $limit = (Get-Date).AddMinutes(120)
+            while ((Get-Date) -lt $limit -and -not ((Test-Path $cfgFile) -and (Get-Content $cfgFile -Raw) -match '(?m)^\s*username:')) { Start-Sleep 3 }
+            Start-Sleep 90   # the login test and buddy list run right after
         }
-        $timedOut = -not $p.HasExited
     } else {
         $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`" -NoWizard $Extra <nul`"" -PassThru -WindowStyle Normal
         $timedOut = -not $p.WaitForExit(30 * 60 * 1000)
@@ -221,6 +221,30 @@ try {
     # 7. The menu, driven by typed answers: show bookings, Enter, quit.
     $r = Run-Native $exe @('menu') 'menu.txt' "1`r`n`r`n0`r`n"
     Rec 'menu (show bookings, quit)' ($r.code -eq 0 -and $r.text -match 'Sandbox check') "exit $($r.code)"
+
+    # 7a. The app's page: the server starts, serves the page, refuses a request without
+    #     its token, lists the booking, then stops when asked (as setup asks it to).
+    $webOut = Join-Path $out 'web-server.txt'
+    $wp = Start-Process $exe -ArgumentList 'web', '--no-open' -PassThru -WindowStyle Hidden -RedirectStandardOutput $webOut
+    $url = $null
+    foreach ($i in 1..30) { Start-Sleep 1; $line = Get-Content $webOut -ErrorAction SilentlyContinue | Select-String '^Open (http\S+)'; if ($line) { $url = $line.Matches[0].Groups[1].Value; break } }
+    $webOk = $false; $detail = 'no address printed'
+    if ($url) {
+        $base = $url -replace '/#t=.*$', ''
+        $tok = $url -replace '^.*#t=', ''
+        try {
+            $page = Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 10
+            $denied = try { Invoke-WebRequest "$base/api/state" -UseBasicParsing -TimeoutSec 10 | Out-Null; $false } catch { $true }
+            $st = Invoke-RestMethod "$base/api/state" -Headers @{ 'X-WACB-Token' = $tok } -TimeoutSec 60
+            $titles = @($st.bookings | ForEach-Object { $_.title }) -join '; '
+            Invoke-RestMethod -Method Post "$base/api/quit" -Headers @{ 'X-WACB-Token' = $tok } -ContentType 'application/json' -Body '{}' -TimeoutSec 10 | Out-Null
+            $stopped = $wp.WaitForExit(20000)
+            $webOk = $page.Content -match 'WAC Court Booker' -and $denied -and $st.version -eq $expected -and @($st.bookings).Count -ge 1 -and $stopped
+            $detail = "page=$($page.StatusCode) no-token refused=$denied version=$($st.version) bookings: $titles; stopped=$stopped"
+        } catch { $detail = "error: $($_.Exception.Message)" }
+    }
+    if (-not $wp.HasExited) { Stop-Process -Id $wp.Id -Force -ErrorAction SilentlyContinue }
+    Rec 'app page (web server)' $webOk $detail
     Remove-Item Env:\WACB_HOME, Env:\WACB_TASK_FOLDER
 
     # 7b. None of that touched the person's own app folder or tasks.
@@ -229,26 +253,13 @@ try {
     $leak = if (Test-Path $realConfig) { (Get-Content $realConfig -Raw) -match 'test-no-password|nickname: sandbox|Sandbox check|Sandbox dry run' } else { $false }
     Rec 'own app folder untouched by tests' ($realBefore -eq $realAfter -and -not $leak -and -not $stray.Count) "bookings.yaml unchanged=$($realBefore -eq $realAfter), test entries in it=$leak, test tasks in the real folder=$($stray.Count)"
 
-    # 8. Running setup again updates in place and keeps the bookings. This run also says
-    #    yes to the desktop shortcut (the question can't be answered unattended).
-    $deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'WAC Court Booker.lnk'
-    if (-not $update) {
-        Rec 'no desktop shortcut without asking' (-not (Test-Path $deskLnk)) "unattended first install made one=$(Test-Path $deskLnk)"
-    }
-    $code = Run-Setup 'setup-console-2.txt' -Extra '-DesktopShortcut Yes'
+    # 8. Running setup again updates in place and keeps the bookings.
+    $code = Run-Setup 'setup-console-2.txt'
     $kept = ((Test-Path $realConfig) -and (Get-FileHash $realConfig).Hash -eq $realAfter) -or (-not $realAfter)
     Rec 'setup.cmd again (update)' ($code -eq 0 -and $kept) "exit $code, bookings.yaml kept=$kept"
-    $target = if (Test-Path $deskLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk).TargetPath } else { '' }
-    Rec 'desktop shortcut' ($target -eq $exe) "target=$target"
-
-    # 8b. The desktop-shortcut question, answered with keypresses in setup's own console
-    #     window: y, then remembered; n, then remembered. Its own process, because it
-    #     attaches to other consoles. Restores the shortcut and saved answer afterwards.
-    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass `
-        -File (Join-Path $in 'answer_prompt.ps1') -Src $src -Out $out | Out-Null
-    $kt = Get-Content (Join-Path $out 'keyboard-test.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
-    if ($kt) { foreach ($c in @($kt)) { Rec "shortcut question: $($c.name)" $c.ok $c.detail } }
-    else { Rec 'shortcut question' $false 'the keyboard test wrote no results (see keyboard-test.txt)' }
+    $startLnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk'
+    $target = if (Test-Path $startLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($startLnk).TargetPath } else { '' }
+    Rec 'Start-menu shortcut opens the page' ($target -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe')) "target=$target"
 
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null
