@@ -24,7 +24,7 @@ Open **WAC Court Booker** from the Start menu or your desktop. It opens in its o
 
 - **My bookings:** each booking in plain words ("Every Tuesday, 6:00 to 7:30 PM, singles with Pat"), the next dates it books, when the app books them and when the PC must be on. Press **Book a court** to add one. Each booking has **Change**, **Skip a week**, **Pause** and **Remove**.
 - **What happened:** every booking run, newest first.
-- **Settings:** your club login (test it, re-read your buddy list or family), wake timers, running while signed out, the clock check, a real test booking you can cancel straight after, and which browser the app uses.
+- **Settings:** your club login (test it, re-read your buddy list or family), wake timers, running while signed out, the clock check, a real test booking you can cancel straight after, which browser the app uses, and a button that puts the shortcut on your desktop (or makes it again).
 
 Every change is saved and the scheduled tasks are rebuilt straight away. You can close the window any time: bookings run on their own.
 
