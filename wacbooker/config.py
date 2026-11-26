@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -69,6 +69,21 @@ class Login:
     username: str
 
 
+@dataclass(frozen=True)
+class Part:
+    """What one scheduled run books. Most bookings are one part ("main"). A singles
+    booking that runs into or out of Prime Time is two: the regular hours ("main",
+    1 week and 1 hour ahead) and the Prime Time hours ("prime", 24 hours ahead)."""
+    key: str
+    time: int
+    length: int
+    prime: bool
+
+    @property
+    def lead(self) -> timedelta:
+        return clubtime.PRIME_LEAD if self.prime else clubtime.OPEN_LEAD
+
+
 @dataclass
 class Booking:
     name: str
@@ -96,6 +111,37 @@ class Booking:
     def end(self) -> int:
         return self.time + self.length
 
+    @property
+    def weekday(self) -> int | None:
+        return self.day if self.day is not None else (self.date.weekday() if self.date else None)
+
+    @property
+    def parts(self) -> list[Part]:
+        """Prime Time only limits singles; doubles is always one part."""
+        if self.play != "singles" or self.weekday is None:
+            return [Part("main", self.time, self.length, False)]
+        pieces = clubtime.split_prime(self.weekday, self.time, self.length)
+        if len(pieces) == 1:
+            return [Part("main", self.time, self.length, pieces[0].prime)]
+        regular = next(p for p in pieces if not p.prime)
+        prime = next(p for p in pieces if p.prime)
+        return [Part("main", regular.start, regular.length, False),
+                Part("prime", prime.start, prime.length, True)]
+
+    @property
+    def prime_kind(self) -> str:
+        """'none', 'all' (books 24 hours ahead) or 'split' (two parts)."""
+        ps = self.parts
+        return "split" if len(ps) > 1 else ("all" if ps[0].prime else "none")
+
+    def part(self, key: str = "main") -> Part:
+        return next(p for p in self.parts if p.key == key)
+
+    def for_part(self, key: str = "main") -> "Booking":
+        """This booking cut down to one part, for the engine."""
+        p = self.part(key)
+        return replace(self, time=p.time, length=p.length)
+
     def describe(self) -> str:
         when = (clubtime.DAYS[self.day] + "s") if self.day is not None else f"{self.date:%a %m/%d/%Y}"
         courts = ", ".join(str(c) for c in self.courts)
@@ -103,13 +149,18 @@ class Booking:
         return (f"{when} {clubtime.fmt_time(self.time)}, {self.length} min{extra}, "
                 f"{self.play} with {', '.join(self.partners)}; courts {courts}; login {self.login}")
 
-    def occurrences(self, after: datetime, count: int = 1) -> list[clubtime.Occurrence]:
-        return clubtime.occurrences(self.day, self.date, self.time, after, count)
+    def occurrences(self, after: datetime, count: int = 1, part: str = "main") -> list[clubtime.Occurrence]:
+        p = self.part(part)
+        return clubtime.occurrences(self.day, self.date, p.time, after, count, lead=p.lead)
 
-    def next_runs(self, after: datetime, count: int = 1) -> list[clubtime.Occurrence]:
+    def due(self, now: datetime, part: str = "main") -> clubtime.Occurrence | None:
+        p = self.part(part)
+        return clubtime.due_occurrence(self.day, self.date, p.time, now, lead=p.lead)
+
+    def next_runs(self, after: datetime, count: int = 1, part: str = "main") -> list[clubtime.Occurrence]:
         """Upcoming occurrences that aren't skipped."""
         out: list[clubtime.Occurrence] = []
-        for occ in self.occurrences(after, count + len(self.skip) + 1):
+        for occ in self.occurrences(after, count + len(self.skip) + 1, part):
             if occ.day not in self.skip:
                 out.append(occ)
             if len(out) >= count:
@@ -305,14 +356,15 @@ def check(cfg: Config, now: datetime | None = None) -> None:
         if key in seen:
             continue
         same = [x for x in active if x.login == b.login and _days_overlap(x, b)]
-        if len(same) > PER_DAY_CAP:
+        # A booking split at Prime Time makes two reservations.
+        if sum(len(x.parts) for x in same) > PER_DAY_CAP:
             seen.add(key)
             when = clubtime.DAYS[b.day] if b.day is not None else f"{b.date:%m/%d/%Y}"
             cfg.warnings.append(
-                f"Login '{b.login}' has {len(same)} bookings on {when}; the club allows "
-                f"{PER_DAY_CAP} per login per day, so the later ones will be turned away.")
+                f"Login '{b.login}' has {sum(len(x.parts) for x in same)} reservations on {when}; "
+                f"the club allows {PER_DAY_CAP} per login per day, so the later ones will be turned away.")
     for b in active:
-        if b.date and clubtime.window_open(clubtime.slot_start(b.date, b.time)) < now:
+        if b.date and not b.next_runs(now - clubtime.LATE_OK, 1):
             cfg.warnings.append(f"Booking '{b.name}' ({b.date:%m/%d/%Y}) is past its booking "
                                 f"window, so it won't run. Remove it or book on the club site.")
 

@@ -89,11 +89,23 @@ Rules the app enforces:
 - `courts` holds court numbers and at most one `any`, which must come last.
 - The number of partners matches `play`.
 - No two bookings on the same login overlap. The club allows 2 reservations per login per day, and the app warns when a day would go over that.
-- Each window must be in the future, and a one-off date has to be at least 169 hours away when it's added (otherwise "book this on the club site now").
+- Each window must be in the future, and a one-off date has to be at least 169 hours away when it's added (24 hours for Prime Time singles), otherwise "book this on the club site now".
+
+## Prime Time
+
+The club's FAQ: Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:00-8:00 PM, and in those hours singles can only be booked 24 hours ahead (doubles keep 1 week and 1 hour). The hours live in `clubtime.PRIME_TIME`.
+
+- A booking is cut into **parts** (`Booking.parts`). Doubles, and singles outside Prime Time, are one part with W = start − 169 h. Singles entirely inside Prime Time are one part with W = start − 24 h.
+- Singles that straddle a Prime Time edge become two parts: `main` (the regular hours, W = its start − 169 h) and `prime` (the Prime Time hours, W = its start − 24 h). Prime Time spans are 90 minutes or longer, so a booking of up to 90 minutes has at most one edge and at most two parts.
+- Each part has its own scheduled task; the Prime Time one is named `<booking> (Prime Time part)` and runs `wac-booker run --booking <name> --part prime`.
+- The `prime` run looks up the `main` run's result for that play date in results.jsonl. If the main part wasn't booked it records "skipped" and stops (no notification: half a booking isn't worth a second alert). Otherwise it puts the court the main part got first in the court list, then the rest, then any court.
+- Both parts count toward the 2-reservations-a-day check.
+- Straddling is allowed but discouraged: Prime Time is often held for lessons. The form explains this and offers nearby times that stay on one side (same length moved out, just the regular part, same length moved in, just the Prime Time part).
+- The 43-45 s acceptance delay was measured on 169-hour windows. The engine presses from W + 1 s until accepted either way, so 24-hour windows need no different timing, but it hasn't been measured there.
 
 ## How a booking runs
 
-Each booking gets its own Windows scheduled task under `\WAC Court Booker\`, set to start 15 minutes before its window W (W = slot start − 169 hours). The task runs `wac-booker run <booking>`. The steps:
+Each booking gets its own Windows scheduled task under `\WAC Court Booker\` (two for a singles booking split at Prime Time), set to start 15 minutes before its window W (W = slot start − 169 hours, or 24 hours for Prime Time singles). The task runs `wac-booker run <booking>`. The steps:
 
 1. **Before W (about W − 15 min to W − 1 min):**
    - read the password from Credential Manager;

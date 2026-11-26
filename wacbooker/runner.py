@@ -76,8 +76,21 @@ async def start_site(cfg: Config, login: Login, log: Callable[[str], None]) -> C
 
 # ---------------------------------------------------------------- scheduled run
 
-def run_booking(name: str) -> int:
-    log = _log(name)
+def span(start: int, length: int) -> str:
+    return f"{clubtime.fmt_time(start)} to {clubtime.fmt_time(start + length)}"
+
+
+def main_part_court(name: str, day) -> int | None:
+    """The court the regular part of a split booking got on `day`, or None if it wasn't booked."""
+    for r in reversed(results.recent(300)):
+        if (r.get("kind") == "run" and r.get("booking") == name and r.get("part", "main") == "main"
+                and r.get("day") == day.isoformat()):
+            return r.get("court") if r.get("status") == "booked" else None
+    return None
+
+
+def run_booking(name: str, part: str = "main") -> int:
+    log = _log(name if part == "main" else f"{name} (Prime Time part)")
     doc, cfg = config.load()
     if not cfg.ok:
         msg = "Not booked: bookings.yaml has a mistake. Open WAC Court Booker to fix it."
@@ -92,10 +105,13 @@ def run_booking(name: str) -> int:
     if not b.active:
         log("paused; nothing to do")
         return 0
+    if part not in {p.key for p in b.parts}:
+        log(f"this booking has no {part} part any more (old task?); nothing to do")
+        return 0
     now = clubtime.now_central()
-    occ = clubtime.due_occurrence(b.day, b.date, b.time, now)
+    occ = b.due(now, part)
     if occ is None:
-        past = [o for o in b.occurrences(now - timedelta(hours=12), 2) if o.window < now]
+        past = [o for o in b.occurrences(now - timedelta(hours=12), 2, part) if o.window < now]
         if past and past[0].day not in b.skip:
             msg = (f"Not booked: the PC was off or asleep when {clubtime.fmt_when(past[0].start)} "
                    f"opened. Book on the club site.")
@@ -108,8 +124,22 @@ def run_booking(name: str) -> int:
     if occ.day in b.skip:
         msg = f"Skipped {clubtime.fmt_when(occ.start)} as asked."
         log(msg)
-        results.record("run", name, "skipped", msg)
+        results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
         return 0
+    pb = b.for_part(part)
+    if part == "prime":
+        # The Prime Time part only makes sense next to the regular part: same court if it can.
+        got = main_part_court(name, occ.day)
+        if got is None:
+            msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
+                   f"{occ.day:%a %m/%d}): the first part wasn't booked.")
+            log(msg)
+            results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
+            return 0
+        pb.courts = [got] + [c for c in b.courts if c != got]
+        if "any" not in pb.courts:
+            pb.courts.append("any")
+        log(f"Prime Time part; the first part got court {got}, so it goes first")
     login = cfg.login(b.login)
     if not creds.has_password(login.username):
         msg = (f"Not booked: no saved password for login '{login.nickname}' "
@@ -122,14 +152,22 @@ def run_booking(name: str) -> int:
         with run_lock(name):
             keep_awake(True)
             try:
-                res = asyncio.run(_run_async(cfg, b, occ, login, log))
+                res = asyncio.run(_run_async(cfg, pb, occ, login, log))
             finally:
                 keep_awake(False)
     except RuntimeError as e:
         log(f"not started: {e}")
         return 1
     title = {"booked": "Booked", "unsure": "Check your bookings"}.get(res.status, "Not booked")
-    results.record("run", name, res.status, res.message,
+    if b.prime_kind == "split" and part == "main" and res.booked:
+        pp = b.part("prime")
+        po = clubtime.window_open(clubtime.slot_start(occ.day, pp.time), pp.lead)
+        res.message += (f" The Prime Time part ({span(pp.time, pp.length)}) books 24 hours ahead, "
+                        f"{clubtime.fmt_when(po)}.")
+    elif part == "prime":
+        title += " (Prime Time part)"
+    results.record("run", name, res.status, res.message, part=part, day=occ.day.isoformat(),
+                   court=res.slot.court if res.slot else None,
                    slot=res.slot.describe() if res.slot else "", attempts=len(res.attempts),
                    accepted_at=next((a["t"] for a in res.attempts if a["outcome"] == CONFIRMED), None))
     notify.toast(title, res.message)
@@ -285,6 +323,10 @@ async def buddy_list(cfg: Config, login: Login, say: Say) -> list[str] | None:
 async def dry_run(cfg: Config, b: Booking, say: Say) -> bool:
     """Read-only: open the next target day's grid and say what would be booked."""
     log = _log(f"dry run {b.name}")
+    if b.prime_kind == "split":
+        p = b.part("prime")
+        say(f"  Checking the regular part. The Prime Time part ({span(p.time, p.length)}) books 24 hours ahead.")
+    b = b.for_part("main")
     nxt = b.next_runs(clubtime.now_central(), 1)
     if not nxt:
         say("  This booking has no future date to check.")

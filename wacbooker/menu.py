@@ -360,7 +360,7 @@ class App:
                       courts=courts, day=day, date=one_off, shorter_ok=shorter_ok,
                       skip=list(old.skip) if old else [], active=old.active if old else True)
         if new.date:
-            w = clubtime.window_open(clubtime.slot_start(new.date, new.time))
+            w = clubtime.window_open(clubtime.slot_start(new.date, new.part().time), new.part().lead)
             if w < clubtime.now_central() + timedelta(minutes=20):
                 say(f"  That slot's booking window opened {clubtime.fmt_when(w)}. "
                     f"Book this one on the club site now.")

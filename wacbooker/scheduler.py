@@ -54,8 +54,12 @@ def run_ps(script: str, stdin: str = "", timeout: float = 120) -> subprocess.Com
                           encoding="utf-8", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
-def task_name(booking_name: str) -> str:
-    return PREFIX + re.sub(r'[\\/:*?"<>|]', "-", booking_name).strip()
+PRIME_SUFFIX = " (Prime Time part)"
+
+
+def task_name(booking_name: str, part: str = "main") -> str:
+    name = PREFIX + re.sub(r'[\\/:*?"<>|]', "-", booking_name).strip()
+    return name + (PRIME_SUFFIX if part == "prime" else "")
 
 
 def python_for_tasks() -> str:
@@ -65,11 +69,13 @@ def python_for_tasks() -> str:
     return str(w if w.exists() else exe)
 
 
-def run_args(booking_name: str) -> str:
+def run_args(booking_name: str, part: str = "main") -> str:
     args = ["-m", "wacbooker"]
     if os.environ.get("WACB_HOME"):
         args += ["--home", os.environ["WACB_HOME"]]
     args += ["run", "--booking", booking_name]
+    if part != "main":
+        args += ["--part", part]
     return subprocess.list2cmdline(args)
 
 
@@ -136,11 +142,12 @@ def plan(cfg: Config, logon: str, now: datetime | None = None) -> list[Plan]:
     now_c = (now or clubtime.now_central()).astimezone(clubtime.CENTRAL)
     out = []
     for b in cfg.bookings:
-        nxt = b.next_runs(now_c - clubtime.LATE_OK, 1)
-        if not nxt:
-            continue
-        out.append(Plan(task_name(b.name), b.name, build_xml(b, nxt[0].run_at, logon, now=now),
-                        nxt[0].run_at, b.active))
+        for p in b.parts:  # a singles booking split at Prime Time has two runs
+            nxt = b.next_runs(now_c - clubtime.LATE_OK, 1, p.key)
+            if not nxt:
+                continue
+            xml = build_xml(b, nxt[0].run_at, logon, now=now, arguments=run_args(b.name, p.key))
+            out.append(Plan(task_name(b.name, p.key), b.name, xml, nxt[0].run_at, b.active))
     return out
 
 
