@@ -261,6 +261,10 @@ try {
     $startLnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk'
     $target = if (Test-Path $startLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($startLnk).TargetPath } else { '' }
     Rec 'Start-menu shortcut opens the page' ($target -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe')) "target=$target"
+    # A first install always puts one on the desktop too, and the update keeps it.
+    $deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'WAC Court Booker.lnk'
+    $dTarget = if (Test-Path $deskLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk).TargetPath } else { '' }
+    Rec 'desktop shortcut opens the page' ($dTarget -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe')) "target=$dTarget"
 
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null

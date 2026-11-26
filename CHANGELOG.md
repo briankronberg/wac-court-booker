@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- **A first install always puts the WAC Court Booker shortcut on the desktop** (it didn't when setup ran without anyone to answer its question). Setup no longer asks. Updates refresh the shortcut if it's there and don't bring it back if you deleted it; **Settings → Desktop shortcut** makes it again. `setup.cmd -DesktopShortcut No` installs without one.
+
 ## 0.3.0
 
 - **Court availability for one-off bookings.** Next to **Just once**:
