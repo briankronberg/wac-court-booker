@@ -234,13 +234,14 @@ try {
         $tok = $url -replace '^.*#t=', ''
         try {
             $page = Invoke-WebRequest "$base/" -UseBasicParsing -TimeoutSec 10
+            $cal = Invoke-WebRequest "$base/calendar" -UseBasicParsing -TimeoutSec 10
             $denied = try { Invoke-WebRequest "$base/api/state" -UseBasicParsing -TimeoutSec 10 | Out-Null; $false } catch { $true }
             $st = Invoke-RestMethod "$base/api/state" -Headers @{ 'X-WACB-Token' = $tok } -TimeoutSec 60
             $titles = @($st.bookings | ForEach-Object { $_.title }) -join '; '
             Invoke-RestMethod -Method Post "$base/api/quit" -Headers @{ 'X-WACB-Token' = $tok } -ContentType 'application/json' -Body '{}' -TimeoutSec 10 | Out-Null
             $stopped = $wp.WaitForExit(20000)
-            $webOk = $page.Content -match 'WAC Court Booker' -and $denied -and $st.version -eq $expected -and @($st.bookings).Count -ge 1 -and $stopped
-            $detail = "page=$($page.StatusCode) no-token refused=$denied version=$($st.version) bookings: $titles; stopped=$stopped"
+            $webOk = $page.Content -match 'WAC Court Booker' -and $cal.Content -match 'Court calendar' -and $denied -and $st.version -eq $expected -and @($st.bookings).Count -ge 1 -and $stopped
+            $detail = "page=$($page.StatusCode) calendar=$($cal.StatusCode) no-token refused=$denied version=$($st.version) bookings: $titles; stopped=$stopped"
         } catch { $detail = "error: $($_.Exception.Message)" }
     }
     if (-not $wp.HasExited) { Stop-Process -Id $wp.Id -Force -ErrorAction SilentlyContinue }

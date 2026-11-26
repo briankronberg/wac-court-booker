@@ -361,6 +361,77 @@ async def dry_run(cfg: Config, b: Booking, say: Say) -> bool:
         await site.close()
 
 
+# ---------------------------------------------------------------- availability (read-only)
+# Free courts are read from the doubles list: it covers every hour, while singles in
+# Prime Time only lists courts 24 hours ahead. A court free for doubles is free.
+
+def _court_list(courts: list[int]) -> str:
+    c = [str(x) for x in courts]
+    return c[0] if len(c) == 1 else ", ".join(c[:-1]) + " and " + c[-1]
+
+
+async def court_check(cfg: Config, login: Login, day, start: int, lengths: list[int], courts: list,
+                      say: Say) -> dict | None:
+    """Which courts are free right now at `start` on `day`, for each length."""
+    log = _log(f"court check {login.nickname}")
+    try:
+        site = await start_site(cfg, login, log)
+    except SiteError as e:
+        say(f"The browser didn't start: {e}")
+        return None
+    try:
+        await site.login()
+        found = await site.find_open(day.strftime("%m/%d/%Y"), start, lengths, "doubles")
+        when = f"{clubtime.fmt_time(start)} on {day:%a %b} {day.day}"
+        out = {L: sorted(found.get(L, {})) for L in lengths}
+        named = [c for c in courts if c != "any"]
+        main = out.get(lengths[0], [])
+        if main:
+            say(f"Yes. At {when}, for {lengths[0]} minutes, court{'s' if len(main) > 1 else ''} "
+                f"{_court_list(main)} {'are' if len(main) > 1 else 'is'} open right now.")
+            mine = [c for c in named if c in main]
+            if named and mine:
+                say(f"Your first choice that's open: court {mine[0]}.")
+            elif named:
+                say(f"None of your courts ({_court_list(named)}) is open, but the others are.")
+        else:
+            say(f"No court is open at {when} for {lengths[0]} minutes right now.")
+            for L in lengths[1:]:
+                if out.get(L):
+                    say(f"For {L} minutes: court{'s' if len(out[L]) > 1 else ''} {_court_list(out[L])}.")
+        say("Courts can still be taken (or freed) before the club opens booking for that time.")
+        return {"open": out}
+    except (SiteError, LookupError) as e:
+        say(f"Couldn't read the court sheet: {e}")
+        return None
+    finally:
+        await site.close()
+
+
+async def calendar_day(cfg: Config, login: Login, day, say: Say) -> dict | None:
+    """Every court's open half hours on `day`, for the calendar window."""
+    log = _log(f"calendar {login.nickname}")
+    try:
+        site = await start_site(cfg, login, log)
+    except SiteError as e:
+        say(f"The browser didn't start: {e}")
+        return None
+    try:
+        await site.login()
+        say("Reading the court sheet for the whole day…")
+        slots = await site.day_open(day.strftime("%m/%d/%Y"), "doubles",
+                                    lambda m: say(f"Read up to {clubtime.fmt_time(m)}…"))
+        open_ = {str(c): sorted(s.start for s in slots if s.court == c) for c in config.COURTS}
+        say(f"Done: {len(slots)} open half hours.")
+        return {"date": day.isoformat(), "courts": list(config.COURTS), "open": open_,
+                "read_at": clubtime.fmt_time(clubtime.now_central().hour * 60 + clubtime.now_central().minute)}
+    except (SiteError, LookupError) as e:
+        say(f"Couldn't read the court sheet: {e}")
+        return None
+    finally:
+        await site.close()
+
+
 def pick_quiet_slot(slots: list[Slot], courts: list, now: datetime) -> Slot | None:
     """Earliest slot more than 25 h away (free to cancel), preferred court first."""
     named = [c for c in courts if c != "any"]
