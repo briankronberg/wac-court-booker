@@ -42,7 +42,10 @@ doc, _ = config.load()
 
 
 def slot() -> dict:  # fresh lists each time, so the YAML has no shared anchors
-    return {"play": "singles", "partners": ["Test Partner"], "date": day.replace(),
+    # Doubles: Prime Time never moves its window (singles there opens only 24 h ahead,
+    # so a run started now wouldn't be due).
+    return {"play": "doubles", "partners": ["Test Partner", "Test Partner Two", "Test Partner Three"],
+            "date": day.replace(),
             "time": clubtime.fmt_time(mins), "length": 30, "courts": [2, "any"]}
 
 

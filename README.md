@@ -10,7 +10,7 @@ Windows only for now as I do not have a Mac to test the builds on. [DESIGN.md](D
 ## Install
 
 1. On GitHub, open **Releases**, download `wac-court-booker-<version>.zip`, unzip it anywhere (Downloads is fine), and double-click **setup.cmd**. If Windows says "Windows protected your PC", choose **More info → Run anyway** (it does that for any file from the internet).
-2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu, and asks whether you also want a shortcut on your desktop. Then the app opens in its own window and walks you through four steps:
+2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu and your desktop. Then the app opens in its own window and walks you through four steps:
    - sign in to the club (the password goes straight into Windows Credential Manager and is never written to a file); the app tests it and reads your buddy list;
    - get the PC ready: wake timers, a clock check, and whether bookings may run while you're signed out of Windows;
    - find your family members (optional);

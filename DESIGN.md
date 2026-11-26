@@ -176,6 +176,7 @@ A setting in the menu (**Logins → Browser**, and in `bookings.yaml` as `browse
 - Stage everything early, and keep the staged page fresh until 45 seconds before W.
 - Never re-submit over an unanswered booking: check the reservation list first.
 - The grid's default view lists only the first few start times, so use its time-of-day search.
+- The grid's court list (lstResource) opens with only courts 2-6 selected. Every grid read presses Select All before searching, or courts 8, 9 and ten never show.
 - The site sometimes glitches for one login (empty grid, a participants page that never loads). Retry the whole staging sequence rather than giving up.
 - Files written from inside the Claude desktop app can land in the app's private AppData copy. Setup must write its config and tasks from a normal process, and the tool must never depend on files created that way.
 

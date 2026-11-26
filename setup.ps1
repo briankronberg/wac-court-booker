@@ -21,14 +21,15 @@
 .PARAMETER AppHome
   Install somewhere other than %LOCALAPPDATA%\WAC Court Booker.
 .PARAMETER DesktopShortcut
-  Ask (default): ask once whether to put a shortcut on the desktop, and remember the
-  answer; an existing desktop shortcut is just refreshed. Yes or No: don't ask.
+  Auto (default): a first install puts a shortcut on the desktop; an update refreshes it
+  if it's there and leaves it gone if it was deleted. Yes: make it (again) now. No: no
+  desktop shortcut, and updates don't make one.
 #>
 param(
     [switch]$NoWizard,
     [switch]$Dev,
     [string]$AppHome,
-    [ValidateSet('Ask', 'Yes', 'No')][string]$DesktopShortcut = 'Ask'
+    [ValidateSet('Auto', 'Ask', 'Yes', 'No')][string]$DesktopShortcut = 'Auto'
 )
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
@@ -194,19 +195,16 @@ try {
     Save-Shortcut (Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk')
     Write-Host "Start-menu shortcut: WAC Court Booker"
 
-    # Desktop shortcut: asked once (the answer is remembered), so updates don't ask again.
+    # Desktop shortcut: always on a first install. Updates refresh it if it's there,
+    # and don't bring it back if it was deleted. 'Ask' is the old name for Auto.
     $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'WAC Court Booker.lnk'
     $choiceFile = Join-Path $app 'desktop-shortcut.txt'
     $want = $DesktopShortcut
-    if ($want -eq 'Ask') {
+    if ($want -in 'Auto', 'Ask') {
+        $choice = if (Test-Path $choiceFile) { (Get-Content $choiceFile -Raw).Trim() } else { '' }
         if (Test-Path $desk) { $want = 'Yes' }
-        elseif (Test-Path $choiceFile) { $want = (Get-Content $choiceFile -Raw).Trim() }
-        elseif ([Console]::IsInputRedirected) { $want = 'No' }   # unattended: don't guess, ask next time
-        else {
-            $a = Read-Host "Put a WAC Court Booker shortcut on your desktop too, to open the app easily? (Y/n)"
-            $want = if ($a -match '^\s*n') { 'No' } else { 'Yes' }
-            Set-Content $choiceFile $want
-        }
+        elseif (-not $choice) { $want = 'Yes'; Set-Content $choiceFile 'Yes' }   # first install
+        else { $want = 'No' }   # deleted, or turned off with -DesktopShortcut No
     } else {
         Set-Content $choiceFile $want
     }
