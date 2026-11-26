@@ -2,6 +2,8 @@
 
 ## 0.3.1
 
+- **Fix: courts 8, 9 and 10 were never seen.** The club's court sheet opens with only courts 2-6 selected, and the app read it as it opened. Every booking, the court check and the calendar missed courts 8-10 (a booking with "any other court" never got one of them). The app now selects every court before it reads the sheet, which also shows the 5:00 and 5:30 AM times on those courts.
+- Calendar view: taken half hours now say "Taken" in a solid block, so they can't be mistaken for free courts.
 - **A first install always puts the WAC Court Booker shortcut on the desktop** (it didn't when setup ran without anyone to answer its question). Setup no longer asks. Updates refresh the shortcut if it's there and don't bring it back if you deleted it; **Settings → Desktop shortcut** makes it again. `setup.cmd -DesktopShortcut No` installs without one.
 
 ## 0.3.0

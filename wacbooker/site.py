@@ -74,14 +74,26 @@ JS_GRID_MESSAGE = r"""() => { const t = document.body ? document.body.innerText 
   const m = t.match(/[^\n]*(?:is not available|not available on the selected date)[^\n]*/i);
   return m ? m[0].trim().slice(0, 200) : ''; }"""
 
+# The court list (lstResource) starts with only courts 2-6 selected, so courts 8, 9
+# and ten never show unless every court is selected before searching.
+JS_ALL_COURTS = r"""() => { const r = document.querySelector('select[id$="lstResource"]');
+  return !r || Array.from(r.options).every(o => o.selected); }"""
+
+# Search with every court selected, from the latest listed start at or before `want`
+# (null: the whole day). Returns the start searched from (-1 for the whole day).
 JS_TOD_SEARCH = r"""(want) => {
   const s = document.querySelector('#ctl00_pageContentHolder_ddlTimeOfDay');
   const a = document.querySelector('#ancSchSearch');
   if (!s || !a) return null;
   let best = null;
-  for (const o of s.options) { const v = parseInt(o.value, 10);
+  if (want === null) best = -1;
+  else for (const o of s.options) { const v = parseInt(o.value, 10);
     if (v >= 0 && v <= want && (best === null || v > best)) best = v; }
   if (best === null) return 'none';
+  const all = document.querySelector('#ancSchSelectAll');
+  if (all) all.click();
+  const r = document.querySelector('select[id$="lstResource"]');
+  if (r) for (const o of r.options) o.selected = true;
   document.querySelectorAll('a[key=B_ADD_TO_CART]').forEach(x => x.setAttribute('data-wac-old', '1'));
   s.value = String(best); s.dispatchEvent(new Event('change', {bubbles: true}));
   a.click(); return best; }"""
@@ -415,17 +427,26 @@ class ClubSite:
         await self.goto(GRID_URL.format(svc=svc, d=date, du=length), timeout=90)
         await self.wait_for("document.querySelectorAll('a[key=B_ADD_TO_CART]').length > 0 || "
                             "/not available/i.test(document.body ? document.body.innerText : '')", 30)
-        if start is not None:
+        # Courts 8-10 aren't selected when the page opens: always search once with
+        # every court selected (and again if `start` still isn't in view).
+        all_courts = bool(await self.js(JS_ALL_COURTS))
+        if start is not None or not all_courts:
             for _ in range(2):
                 slots = await self.js(JS_SLOTS) or []
                 sts = [s["st"] for s in slots]
                 # The list shows 15 rows a page, sorted by time: every court at
                 # `start` is on this page only if a later start time shows too.
-                if sts and min(sts) <= start < max(sts):
+                if all_courts and (start is None or (sts and min(sts) <= start < max(sts))):
                     break
                 picked = await self.js(JS_TOD_SEARCH, start)
+                all_courts = True
                 if picked in (None, "none"):
                     break
+                if not sts:
+                    # Nothing listed before the search (courts 2-6 all taken), so there
+                    # are no old rows to watch disappear: wait for new rows or a message.
+                    await self.wait_for("document.querySelectorAll('a[key=B_ADD_TO_CART]').length > 0 || "
+                                        "/not available/i.test(document.body ? document.body.innerText : '')", 10)
                 end = time.time() + 45
                 while time.time() < end:
                     await asyncio.sleep(0.5)
