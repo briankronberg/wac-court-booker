@@ -48,7 +48,7 @@ function Run-Native($file, [string[]]$argv, $logName, $stdin = $null) {
     $o | Set-Content (Join-Path $out $logName) -Encoding UTF8
     return @{ code = $code; text = ($o -join "`n") }
 }
-function Run-Setup($logName, [switch]$Wizard) {
+function Run-Setup($logName, [switch]$Wizard, [string]$Extra = '') {
     # Like a double-click: setup's own window, visible in the sandbox. Unattended, stdin
     # is empty so a 'pause' after a failure can't hang the test. With -Wizard (hands-on
     # mode) it's exactly a double-click: the person at the sandbox answers the wizard, and
@@ -69,7 +69,7 @@ function Run-Setup($logName, [switch]$Wizard) {
         }
         $timedOut = -not $p.HasExited
     } else {
-        $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`" -NoWizard <nul`"" -PassThru -WindowStyle Normal
+        $p = Start-Process cmd.exe -ArgumentList "/c `"`"$setupCmd`" -NoWizard $Extra <nul`"" -PassThru -WindowStyle Normal
         $timedOut = -not $p.WaitForExit(30 * 60 * 1000)
     }
     if ($timedOut) { $p.Kill() }
@@ -229,10 +229,26 @@ try {
     $leak = if (Test-Path $realConfig) { (Get-Content $realConfig -Raw) -match 'test-no-password|nickname: sandbox|Sandbox check|Sandbox dry run' } else { $false }
     Rec 'own app folder untouched by tests' ($realBefore -eq $realAfter -and -not $leak -and -not $stray.Count) "bookings.yaml unchanged=$($realBefore -eq $realAfter), test entries in it=$leak, test tasks in the real folder=$($stray.Count)"
 
-    # 8. Running setup again updates in place and keeps the bookings.
-    $code = Run-Setup 'setup-console-2.txt'
+    # 8. Running setup again updates in place and keeps the bookings. This run also says
+    #    yes to the desktop shortcut (the question can't be answered unattended).
+    $deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'WAC Court Booker.lnk'
+    if (-not $update) {
+        Rec 'no desktop shortcut without asking' (-not (Test-Path $deskLnk)) "unattended first install made one=$(Test-Path $deskLnk)"
+    }
+    $code = Run-Setup 'setup-console-2.txt' -Extra '-DesktopShortcut Yes'
     $kept = ((Test-Path $realConfig) -and (Get-FileHash $realConfig).Hash -eq $realAfter) -or (-not $realAfter)
     Rec 'setup.cmd again (update)' ($code -eq 0 -and $kept) "exit $code, bookings.yaml kept=$kept"
+    $target = if (Test-Path $deskLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk).TargetPath } else { '' }
+    Rec 'desktop shortcut' ($target -eq $exe) "target=$target"
+
+    # 8b. The desktop-shortcut question, answered with keypresses in setup's own console
+    #     window: y, then remembered; n, then remembered. Its own process, because it
+    #     attaches to other consoles. Restores the shortcut and saved answer afterwards.
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $in 'answer_prompt.ps1') -Src $src -Out $out | Out-Null
+    $kt = Get-Content (Join-Path $out 'keyboard-test.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+    if ($kt) { foreach ($c in @($kt)) { Rec "shortcut question: $($c.name)" $c.ok $c.detail } }
+    else { Rec 'shortcut question' $false 'the keyboard test wrote no results (see keyboard-test.txt)' }
 
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null

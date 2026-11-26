@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+
+- **Desktop shortcut:** setup asks once whether to put a WAC Court Booker shortcut on the desktop as well as in the Start menu. The answer is remembered, so updates don't ask again, and an existing desktop shortcut is refreshed. `setup.cmd -DesktopShortcut Yes|No` answers without asking.
+- DESIGN.md is in the download again.
+
 ## 0.1.7
 
 - The release zip holds only what a user needs: README.md, setup.cmd, setup.ps1, get-pwsh.ps1, pyproject.toml and the app. Tests, design notes, this changelog and developer docs stay in the repo (`.gitattributes` export-ignore).
