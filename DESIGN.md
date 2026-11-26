@@ -103,6 +103,13 @@ The club's FAQ: Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:
 - Straddling is allowed but discouraged: Prime Time is often held for lessons. The form explains this and offers nearby times that stay on one side (same length moved out, just the regular part, same length moved in, just the Prime Time part).
 - The 43-45 s acceptance delay was measured on 169-hour windows. The engine presses from W + 1 s until accepted either way, so 24-hour windows need no different timing, but it hasn't been measured there.
 
+## Court availability (one-off dates)
+
+- **Are courts open?** runs `find_open` for the form's date, start and lengths and reports the courts per length. **Calendar view** opens `/calendar` in its own window and runs `day_open`: the list shows 15 rows a page, so it steps through the day with the time-of-day search from the latest start seen, collecting every open 30-minute slot (about 30 seconds for a day).
+- Both read the **doubles** list: it covers every hour, while singles in Prime Time only lists courts 24 hours ahead. A court free for doubles is free.
+- The list shows open slots for dates beyond the booking window too, so a one-off date more than a week away can be checked.
+- Both are background jobs like the other club-site checks (one at a time). The calendar window follows its own job, so the main window doesn't also show it.
+
 ## How a booking runs
 
 Each booking gets its own Windows scheduled task under `\WAC Court Booker\` (two for a singles booking split at Prime Time), set to start 15 minutes before its window W (W = slot start − 169 hours, or 24 hours for Prime Time singles). The task runs `wac-booker run <booking>`. The steps:

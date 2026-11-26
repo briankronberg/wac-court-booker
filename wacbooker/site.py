@@ -100,11 +100,13 @@ JS_DIALOG = r"""(court) => {
 
 # The participants page's member table: one row per person, cells Name, Relationship
 # (Main = the signed-in member, Spouse/Child/... = family on the account, Buddy).
-# Rows are the ones with a member checkbox; each gives its cells that have text, so a
-# leading checkbox-only cell doesn't shift the columns: [name, relationship, ...].
+# Every data row counts, whatever its inputs: a family member who already has 2
+# reservations that day shows only a disabled host button and no member checkbox.
+# Each row gives its cells that have text, so a leading checkbox-only cell doesn't
+# shift the columns: [name, relationship, ...].
 JS_PARTICIPANTS = r"""() => { const g = document.querySelector('table[id$="ctrlMemberBuddy_gridViewMembers"]');
   if (!g) return null;
-  return Array.from(g.querySelectorAll('tr')).filter(tr => tr.querySelector('input[id$="_chkMember"]'))
+  return Array.from(g.querySelectorAll('tr')).filter(tr => tr.querySelector('td') && !tr.querySelector('th'))
     .map(tr => Array.from(tr.querySelectorAll('td')).map(td => (td.innerText || '').replace(/\s+/g, ' ').trim())
       .filter(t => t)).filter(c => c.length >= 2); }"""
 
@@ -457,6 +459,26 @@ class ClubSite:
                     result[length] = hits
                     break
         return result
+
+    async def day_open(self, date: str, play: str = "doubles",
+                       progress: Callable[[int], None] | None = None) -> list[Slot]:
+        """Every open 30-minute slot of the day. The list shows 15 rows a page, so it
+        steps through the day with the time-of-day search, from the latest start seen."""
+        seen: dict[tuple[int, int], Slot] = {}
+        for _, svc in SERVICES[play]:
+            start, last = None, -1
+            for _ in range(40):
+                shown = await self.load_grid(svc, date, 30, start)
+                for s in shown:
+                    if s["et"] - s["st"] == 30:
+                        seen.setdefault((s["st"], s["court"]), Slot(date, s["st"], 30, s["court"], s["r"], svc))
+                sts = [s["st"] for s in shown]
+                if not sts or max(sts) <= last:
+                    break
+                last = start = max(sts)
+                if progress:
+                    progress(last)
+        return sorted(seen.values(), key=lambda s: (s.start, s.court))
 
     async def list_open(self, date: str, length: int, play: str) -> list[Slot]:
         """Open slots in each service's default view (the earliest times of the day)."""

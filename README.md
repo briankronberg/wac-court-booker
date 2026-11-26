@@ -38,6 +38,7 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
 - 30, 60 or 90 minutes, optionally falling back to shorter at the same start time.
 - Courts in order of preference (press them in order), optionally followed by any other court.
 - Weekly on a day, or a one-off date, with skip dates.
+  - For a one-off date, **Are courts open?** (next to **Just once**) reads the club's court sheet and says which courts are free at your time right now. **Calendar view** opens a window with every court for that day, half hour by half hour, with Prime Time marked and your time outlined. It has **Refresh**, **Day before** and **Day after** buttons. Both only read the court sheet; nothing is booked.
 - Booked by any of the club logins you've added on this PC.
 
 The club allows 2 reservations per login per day. The app warns when a day would go over that and refuses bookings that overlap on one login.

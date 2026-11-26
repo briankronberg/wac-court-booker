@@ -139,6 +139,8 @@ label.field span { display: block; font-weight: 600; margin-bottom: 4px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .chip { display: inline-flex; gap: 8px; align-items: center; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 99px; padding: 6px 8px 6px 14px; font-weight: 600; }
 .chip button { border: 0; background: none; cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 2px 6px; border-radius: 50%; }
+.once-row { align-items: center; gap: 14px; }
+.once-row .avail { gap: 8px; }
 .summary { position: sticky; bottom: 0; background: var(--surface); border: 2px solid var(--accent-line); border-radius: var(--radius); padding: 16px 18px; margin-top: 18px; box-shadow: var(--shadow); }
 .summary p { margin: 0 0 12px; font-size: 1.05rem; }
 .errors { color: var(--bad); margin: 0 0 10px; padding-left: 20px; }
@@ -377,7 +379,8 @@ document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => {
 async function refresh() {
   S = await api("/api/state");
   $("#ver").textContent = "version " + S.version;
-  if (S.job && !S.job.done && !dlg.open) followJob(S.job, () => {});
+  // The calendar window follows its own job.
+  if (S.job && !S.job.done && !dlg.open && S.job.kind !== "calendar") followJob(S.job, () => {});
   if (!S.logins.length && welcomeStep === null) welcomeStep = 0;
   render();
 }
@@ -598,7 +601,9 @@ function renderForm(el) {
      <div class="row" style="margin-top:8px"><input type="text" id="f-other" placeholder="Full name, as the club site shows it" style="max-width:320px"><button class="btn" id="f-addother" type="button">Add</button></div></details>`;
   h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
 
-  h += sec("How often?", `<div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>`);
+  h += sec("How often?", `<div class="row once-row"><div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>
+     ${f.weekly ? "" : `<div class="row avail"><button class="btn" id="f-check" type="button">Are courts open?</button><button class="btn" id="f-cal" type="button">Calendar view</button></div>`}</div>`,
+    f.weekly ? "" : "For a one-off date you can look at the club's court sheet first: check your time, or see every court for the day.");
   if (f.weekly) h += sec("Which day?", `<div class="choices">${DAYS.map((d, i) => choice("day", i, d.slice(0, 3), "")).join("")}</div>`);
   else {
     const min = new Date(Date.now() + (f.play === "singles" ? 1 : 7) * 864e5).toISOString().slice(0, 10);
@@ -675,6 +680,18 @@ function renderForm(el) {
     f.time = x.start; f.length = x.len; if (f.length === 30) f.shorter_ok = false;
     f.errors = []; render(); toast(`Changed to ${x.label}.`);
   }));
+  if ($("#f-check")) $("#f-check").onclick = () => {
+    if (!f.date) { toast("Choose the date first (below).", true); return; }
+    if (f.time === null) { toast("Choose the start time first (below).", true); return; }
+    runJob({ kind: "court-check", login: f.login, date: f.date, time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: f.courts.length ? f.courts : ["any"] });
+  };
+  if ($("#f-cal")) $("#f-cal").onclick = () => {
+    if (!f.date) { toast("Choose the date first (below).", true); return; }
+    const q = new URLSearchParams({ t: TOKEN, d: f.date, l: f.login || "" });
+    if (f.time !== null) { q.set("s", f.time); q.set("n", f.length); }
+    const w = window.open("/calendar#" + q.toString(), "wacb-calendar", "popup,width=1100,height=900");
+    if (!w) toast("Windows blocked the calendar window. Try again.", true);
+  };
   $("#f-save").onclick = saveForm;
 }
 

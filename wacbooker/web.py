@@ -30,6 +30,7 @@ REPO = "briankronberg/wac-court-booker"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 PAGE = Path(__file__).with_name("web") / "index.html"
+CALENDAR_PAGE = Path(__file__).with_name("web") / "calendar.html"
 IDLE_STOP = 180          # seconds without a heartbeat (window closed) before the server stops
 FIRST_LOAD_WAIT = 300    # how long to wait for the page to load the first time
 QUESTION_WAIT = 20 * 60  # an unanswered question in a job takes its default after this
@@ -155,6 +156,7 @@ class Job:
         self.done = False
         self.ok: bool | None = None
         self.question: dict | None = None
+        self.data: Any = None  # a job's result for the page (court check, calendar)
         self._answer: bool | None = None
         self._answered = threading.Event()
 
@@ -176,7 +178,7 @@ class Job:
 
     def view(self) -> dict:
         return {"id": self.id, "kind": self.kind, "title": self.title, "lines": self.lines,
-                "done": self.done, "ok": self.ok, "question": self.question}
+                "done": self.done, "ok": self.ok, "question": self.question, "data": self.data}
 
 
 # ---------------------------------------------------------------- the app
@@ -456,7 +458,8 @@ class WebApp:
             titles = {"test-login": "Testing your login", "buddies": "Reading your buddy list",
                       "family": "Reading your family members", "new-login": "Checking your login",
                       "dry-run": "Looking at the court sheet", "clock": "Checking the PC clock",
-                      "test-booking": "Test booking"}
+                      "test-booking": "Test booking", "court-check": "Are courts open?",
+                      "calendar": "Court calendar"}
             if kind not in titles:
                 raise UserError("Unknown check.")
             if kind != "clock" and not login:
@@ -525,6 +528,27 @@ class WebApp:
                 r = asyncio.run(runner.test_booking(cfg, login, "singles", [partner], courts, say,
                                                     lambda q: job.ask(q, True)))
                 return r in ("cancelled", "kept")
+            return work
+        if kind in ("court-check", "calendar"):
+            try:
+                day = date.fromisoformat(str(body.get("date")))
+            except ValueError:
+                raise UserError("Choose the date first.")
+            if kind == "calendar":
+                def work():
+                    job.data = asyncio.run(runner.calendar_day(cfg, login, day, say))
+                    return job.data is not None
+                return work
+            try:
+                start, length = int(body.get("time")), int(body.get("length") or 60)
+            except (TypeError, ValueError):
+                raise UserError("Choose the start time first.")
+            lengths = [length] + ([x for x in (60, 30) if x < length] if body.get("shorter_ok") else [])
+            courts = list(body.get("courts") or ["any"])
+
+            def work():
+                job.data = asyncio.run(runner.court_check(cfg, login, day, start, lengths, courts, say))
+                return job.data is not None
             return work
         raise UserError("Unknown check.")
 
@@ -665,8 +689,8 @@ def make_handler(app: WebApp, token: str, port_ref: list[int]):
             if not self._host_ok():
                 return self._send(403, b"Forbidden", "text/plain")
             path, _, query = self.path.partition("?")
-            if path in ("/", "/index.html"):
-                html = PAGE.read_bytes()
+            if path in ("/", "/index.html", "/calendar"):
+                html = (CALENDAR_PAGE if path == "/calendar" else PAGE).read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(html)))

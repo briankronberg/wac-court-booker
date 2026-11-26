@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- **Court availability for one-off bookings.** Next to **Just once**:
+  - **Are courts open?** reads the club's court sheet and says which courts are free at your date and time right now (and for shorter lengths if you allow them), and whether your first-choice court is one of them.
+  - **Calendar view** opens a window with all 8 courts for the day, half hour by half hour: open, taken, Prime Time marked, your time outlined. It has Refresh, Day before and Day after.
+  - Both only read the court sheet; nothing goes in your cart.
+- **Fix: family members weren't found** when one of them already had 2 reservations on the day the app looked at. The club site then shows that person's row without a member checkbox, and the app skipped the row. It now reads every row.
+
 ## 0.2.0
 
 - **A window instead of the text menu.** The Start-menu and desktop shortcuts open the app in its own window, with three pages: My bookings, What happened and Settings. Booking a court is one form of big buttons (singles or doubles, names to click, day, time, length, courts in order). It reads the booking back in plain words before you save. Each booking has Change, Skip a week, Pause and Remove.
