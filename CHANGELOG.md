@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- **A window instead of the text menu.** The Start-menu and desktop shortcuts open the app in its own window, with three pages: My bookings, What happened and Settings. Booking a court is one form of big buttons (singles or doubles, names to click, day, time, length, courts in order). It reads the booking back in plain words before you save. Each booking has Change, Skip a week, Pause and Remove.
+- **First run:** after setup, the window walks through signing in to the club, getting the PC ready (wake timers, clock, signed-out runs), finding family members and booking the first court.
+- **Updates:** the window checks GitHub for a newer release each time it opens, and on **Check for updates**. When there is one, it shows the download link and the steps.
+- Club-site checks (test sign-in, buddy list, family, court sheet, test booking) show their progress in the window. The test booking's questions are Yes/No buttons.
+- The window is a page served only to this PC (127.0.0.1) and locked with a random key. It stops a few minutes after you close it, and setup closes it before updating.
+- `wac-booker menu` still opens the text menu.
+- **Settings → Desktop shortcut** puts a shortcut to the window on the desktop, or makes it again (for example if an old one opens the text menu).
+- My bookings explains the booking limits: at most 1 week and 1 hour ahead, and primetime courts only 24 hours ahead.
+- About shows who made the app, with a link to its GitHub page.
+- Sandbox test: the desktop-shortcut checks are gone; it checks the page server instead.
+
 ## 0.1.8
 
 - **Desktop shortcut:** setup asks once whether to put a WAC Court Booker shortcut on the desktop as well as in the Start menu. The answer is remembered, so updates don't ask again, and an existing desktop shortcut is refreshed. `setup.cmd -DesktopShortcut Yes|No` answers without asking.

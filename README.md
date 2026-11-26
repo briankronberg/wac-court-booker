@@ -10,42 +10,33 @@ Windows only for now as I do not have a Mac to test the builds on. [DESIGN.md](D
 ## Install
 
 1. On GitHub, open **Releases**, download `wac-court-booker-<version>.zip`, unzip it anywhere (Downloads is fine), and double-click **setup.cmd**. If Windows says "Windows protected your PC", choose **More info → Run anyway** (it does that for any file from the internet).
-2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu, asks whether you also want a shortcut on your desktop, then starts a short wizard:
-   - add your club login (the password goes straight into Windows Credential Manager and is never written to a file);
-   - test the login and read your buddy list, so partners can be picked by name;
-   - check the PC clock against internet time;
-   - choose whether bookings may run while you're signed out of Windows;
-   - turn on wake timers so a sleeping PC wakes up for a booking;
-   - offer a test booking you can cancel straight after;
-   - add your first booking.
+2. Setup installs what's missing (PowerShell 7, Python), sets up the app and its own browser, adds **WAC Court Booker** to the Start menu, and asks whether you also want a shortcut on your desktop. Then the app opens in its own window and walks you through four steps:
+   - sign in to the club (the password goes straight into Windows Credential Manager and is never written to a file); the app tests it and reads your buddy list;
+   - get the PC ready: wake timers, a clock check, and whether bookings may run while you're signed out of Windows;
+   - find your family members (optional);
+   - book your first court.
 
 Run setup.cmd again any time to update the app. Your bookings and logins are kept.
 
 ## Day to day
 
-Open **WAC Court Booker** from the Start menu:
+Open **WAC Court Booker** from the Start menu or your desktop. It opens in its own window with three pages:
 
-```
-1  Show my bookings and next run times
-2  Add a booking
-3  Edit a booking
-4  Remove a booking
-5  Skip a date
-6  Pause / resume a booking
-7  Logins: add, test, remove (also: browser, signed-out runs, wake timers)
-8  Test everything (includes a test booking)
-9  Show recent results
-```
+- **My bookings:** each booking in plain words ("Every Tuesday, 6:00 to 7:30 PM, singles with Pat"), the next dates it books, when the app books them and when the PC must be on. Press **Book a court** to add one. Each booking has **Change**, **Skip a week**, **Pause** and **Remove**.
+- **What happened:** every booking run, newest first.
+- **Settings:** your club login (test it, re-read your buddy list or family), wake timers, running while signed out, the clock check, a real test booking you can cancel straight after, which browser the app uses, and a button that puts the shortcut on your desktop (or makes it again).
 
-Every change is saved and the scheduled tasks are rebuilt straight away. Menu 1 shows when the PC must be on for each booking.
+Every change is saved and the scheduled tasks are rebuilt straight away. You can close the window any time: bookings run on their own.
 
-On a booking day there's nothing to do. A toast tells you how it went, for example "Booked: Ct 5, Tue 12/15 6:00 PM, 90 min", or "Not booked: no court open at 6:00 PM ... Book on the club site."
+**Updates:** the app checks GitHub for a newer version each time it opens (or press **Check for updates** at the top). When there is one, it shows the download link and the steps.
+
+On a booking day there's nothing to do. A notification tells you how it went, for example "Booked: Ct 5, Tue 12/15 6:00 PM, 90 min", or "Not booked: no court open at 6:00 PM ... Book on the club site."
 
 ## What a booking can be
 
-- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site. In the menu, move through the list with the arrow keys (type a few letters to narrow it) and press Enter. Family members on your club account come first, marked "(family)". The club site shows them only once a court is in your cart, so setup offers to read them: it puts a quiet court in the cart for a few seconds, then presses Back, and nothing is booked. Menu 7 does the same, and each test or real booking updates the list. Anyone else: choose "Someone not on this list" and type their full name.
+- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site: click their names (type a few letters to narrow the list). Family members on your club account come first, marked "Family". The club site shows them only once a court is in your cart, so the app offers to find them: it puts a quiet court in the cart for a few seconds, then presses Back, and nothing is booked. Each test or real booking also updates the list. Anyone else: choose "Someone else" and type their full name.
 - 30, 60 or 90 minutes, optionally falling back to shorter at the same start time.
-- A court preference list, such as `5, 4, 3, any`. `any` is optional and must come last.
+- Courts in order of preference (press them in order), optionally followed by any other court.
 - Weekly on a day, or a one-off date, with skip dates.
 - Booked by any of the club logins you've added on this PC.
 
@@ -53,7 +44,7 @@ The club allows 2 reservations per login per day. The app warns when a day would
 
 ## The config file
 
-The menu writes `%LOCALAPPDATA%\WAC Court Booker\bookings.yaml`. You can edit it by hand: it's commented, and the app explains any mistake in plain words. The scheduled tasks pick up hand edits at their next run, and opening the menu and choosing **7 → Rebuild scheduled tasks** updates the run times.
+The menu writes `%LOCALAPPDATA%\WAC Court Booker\bookings.yaml`. You can edit it by hand: it's commented, and the app explains any mistake in plain words. The scheduled tasks pick up hand edits at their next run, and **Settings → Rebuild scheduled tasks** updates the run times.
 
 ## How a booking runs
 
@@ -70,7 +61,7 @@ The PC has to be on (asleep is fine with wake timers on). If it's off at W, you 
 
 ## Browsers
 
-Menu 7 → Browser, or `browser:` in bookings.yaml:
+**Settings → Browser the app uses**, or `browser:` in bookings.yaml:
 
 | Setting | What runs |
 |---|---|
@@ -88,7 +79,7 @@ For Edge and Chrome, `show_window: true` shows the window, which is handy for wa
 |---|---|
 | `bookings.yaml` | Your settings and bookings |
 | `logs\wac-booker.log` | Everything each run did |
-| `results.jsonl` | One line per run (menu 9 shows them) |
+| `results.jsonl` | One line per run ("What happened" shows them) |
 | `buddies.json` | Buddy names read from the club site |
 | `venv\`, `browsers\` | The app and its browser |
 
@@ -96,7 +87,7 @@ Passwords live only in Windows Credential Manager, under "WAC Court Booker".
 
 ## Commands
 
-The Start-menu entry opens the menu. The same program has commands for checking things (`wac-booker --help`):
+The Start-menu entry opens the app's window. `wac-booker menu` is the older text menu, for anyone who prefers a console. The same program has commands for checking things (`wac-booker --help`):
 
 ```powershell
 & "$env:LOCALAPPDATA\WAC Court Booker\venv\Scripts\wac-booker.exe" check

@@ -113,7 +113,7 @@ Set-Content (Join-Path $inDir 'expected-version.txt') $version
 Remove-Item (Join-Path $inDir 'interactive.txt'), (Join-Path $inDir 'update.txt') -ErrorAction SilentlyContinue
 if ($HandsOn) { Set-Content (Join-Path $inDir 'interactive.txt') 'hands-on' }
 if ($Reuse) { Set-Content (Join-Path $inDir 'update.txt') "update-$stamp" }
-foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py', 'cleanup_old.py', 'answer_prompt.ps1') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
+foreach ($f in 'inside.cmd', 'inside.ps1', 'make_booking.py', 'cleanup_old.py') { Copy-Item (Join-Path $PSScriptRoot $f) $inDir }
 # The unit tests aren't in a release zip, so they go in separately (with pyproject.toml,
 # which the version test reads from the folder above tests).
 $devDir = Join-Path $inDir 'dev'
@@ -156,7 +156,8 @@ $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 while ((Get-Date) -lt $deadline -and -not (Test-Path $done)) {
     Start-Sleep 5
     if (Test-Path $progress) {
-        $lines = @(Get-Content $progress)
+        # The sandbox may be writing it right now; try again next round.
+        try { $lines = @(Get-Content $progress -ErrorAction Stop) } catch { continue }
         $lines | Select-Object -Skip $shown | ForEach-Object { Write-Host "  $_" }
         $shown = $lines.Count
     }

@@ -142,8 +142,19 @@ try {
         @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
             $_.Path -and $_.Path.StartsWith($venvDir + '\', [StringComparison]::OrdinalIgnoreCase) })
     }
+    # The app's page server stops by itself when asked (unless a check is running).
+    $webInfo = Join-Path $app 'web.json'
+    if ((Get-AppProcess).Count -and (Test-Path $webInfo)) {
+        try {
+            $wi = Get-Content $webInfo -Raw | ConvertFrom-Json
+            Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$($wi.port)/api/quit" -ContentType 'application/json' `
+                -Headers @{ 'X-WACB-Token' = $wi.token } -Body '{}' -TimeoutSec 5 | Out-Null
+            $until = (Get-Date).AddSeconds(15)
+            while ((Get-AppProcess).Count -and (Get-Date) -lt $until) { Start-Sleep 1 }
+        } catch { }
+    }
     if ((Get-AppProcess).Count) {
-        Write-Host "WAC Court Booker is open. Close its menu window to continue (if a booking is running, wait for it to finish)." -ForegroundColor Yellow
+        Write-Host "WAC Court Booker is open. Close its window to continue (if a booking or a check is running, wait for it to finish)." -ForegroundColor Yellow
         $until = (Get-Date).AddMinutes(5)
         while ((Get-AppProcess).Count -and (Get-Date) -lt $until) { Start-Sleep 2 }
         if ((Get-AppProcess).Count) { throw "WAC Court Booker is still open. Close it, then run setup.cmd again." }
@@ -174,7 +185,7 @@ try {
     $sh = New-Object -ComObject WScript.Shell
     function Save-Shortcut($path) {
         $s = $sh.CreateShortcut($path)
-        $s.TargetPath = Join-Path $venv 'Scripts\wac-booker.exe'
+        $s.TargetPath = Join-Path $venv 'Scripts\wac-booker-web.exe'
         if ($AppHome) { $s.Arguments = "--home `"$app`"" }
         $s.WorkingDirectory = $app
         $s.Description = 'Book WAC Hartland tennis courts when each booking window opens'
@@ -208,9 +219,12 @@ try {
     Write-Host "`nInstalled WAC Court Booker $ver." -ForegroundColor Green
 
     if (-not $NoWizard) {
+        # Open the app's page: on a first install it starts with the welcome steps.
         $wargs = @()
-        if ($AppHome) { $wargs += @('--home', $app) }
-        & (Join-Path $venv 'Scripts\wac-booker.exe') @wargs setup
+        if ($AppHome) { $wargs += @('--home', "`"$app`"") }
+        $web = Join-Path $venv 'Scripts\wac-booker-web.exe'
+        if ($wargs.Count) { Start-Process $web -ArgumentList $wargs } else { Start-Process $web }
+        Write-Host "WAC Court Booker is opening in its own window. You can close this one."
     }
     exit 0
 }

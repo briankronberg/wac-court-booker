@@ -15,7 +15,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="wac-booker", description=f"{APP_NAME} {__version__}")
     p.add_argument("--home", help="use this folder instead of %%LOCALAPPDATA%%\\WAC Court Booker")
     sub = p.add_subparsers(dest="cmd")
-    sub.add_parser("menu", help="the menu (default)")
+    sub.add_parser("menu", help="the menu in this console (default)")
+    w = sub.add_parser("web", help="open the app's page (what the Start-menu shortcut does)")
+    w.add_argument("--no-open", action="store_true", help="don't open a window; print the address instead")
+    w.add_argument("--port", type=int, default=0, help="listen on this port (default: any free one)")
     sub.add_parser("setup", help="first-run setup wizard")
     r = sub.add_parser("run", help="run one booking now (what the scheduled task does)")
     r.add_argument("--booking", required=True)
@@ -64,6 +67,10 @@ def main(argv: list[str] | None = None) -> int:
         return menu.main_menu()
     if cmd == "setup":
         return menu.wizard()
+    if cmd == "web":
+        from . import web
+        return web.run(open_page=not args.no_open, port=args.port,
+                       print_url=lambda u: print(f"Open {u}", flush=True))
     if cmd == "run":
         return runner.run_booking(args.booking)
     if cmd == "version":
