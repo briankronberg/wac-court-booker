@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- **Book Now.** A new button next to **Save booking** books straight away when the club is already taking bookings for that time (from a week ahead, or a day ahead in Prime Time). It's greyed out until everything is chosen and the time is open, and the note above the buttons says when it opens. It asks you to confirm first. For a weekly booking it books the soonest such day if that's open, and **Save booking** still books every week after that.
+- One-off dates can now be any day from today. **Save booking** is greyed out for a date the club has already opened, since there's nothing left to schedule.
+- **See Available Courts** is there for weekly bookings too (it opens on the booking's next date).
+
 ## 0.4.3
 
 - **Name the people booking courts.** In **See Available Courts**, press a booked court and type who it is. From then on the calendar shows that person's first initial and full last name on every booking of theirs, on any day. Names are kept on this PC only, and must fit the club's short form (for "Smi, A.", a first name starting with A and a last name starting with Smi), which catches typos. Leave the name empty to forget it.
