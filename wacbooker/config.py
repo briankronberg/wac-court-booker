@@ -56,6 +56,7 @@ bookings: []
 #    length: 90
 #    shorter_ok: true       # if no court has 90, try 60, then 30 (same start time)
 #    then: 60               # a second session right after the first (30, 60 or 90 minutes)
+#    blocker: true          # a short guard court right before the first session, cancelled once it's booked
 #    courts: [5, 4, 3, any] # preference order; 'any' only at the end, optional
 #    skip: [2026-12-22, 2026-12-29]
 #  A ball machine:  play: machine,  machine: genie (or regular, or either),  partners: []
@@ -115,6 +116,7 @@ class Booking:
     date: date | None = None     # one-off
     shorter_ok: bool = False
     then: int = 0                # a second session right after the first: 30, 60 or 90 minutes
+    blocker: bool = False        # a guard slot right before the main part, cancelled once it's booked
     skip: list[date] = field(default_factory=list)
     active: bool = True
     machine: str | None = None   # play: machine only
@@ -161,8 +163,9 @@ class Booking:
 
     @property
     def reservations(self) -> int:
-        """How many reservations each login gets on the day (the club allows 2)."""
-        return len(self.parts)
+        """How many reservations each login gets on the day (the club allows 2).
+        A blocker is a guard slot cancelled in the same session, so it doesn't count."""
+        return sum(1 for p in self.parts if p.key != "blocker")
 
     @property
     def weekday(self) -> int | None:
@@ -171,6 +174,7 @@ class Booking:
     @property
     def parts(self) -> list[Part]:
         """Prime Time limits singles and ball machines; doubles is always one part.
+        A blocker is one more part ("blocker"), the hour before the main part's start.
         A second session (`then`) is one more part ("next"), right after the first."""
         if self.play not in ("singles", "machine") or self.weekday is None:
             out = [Part("main", self.time, self.length, False)]
@@ -183,6 +187,8 @@ class Booking:
                 prime = next(p for p in pieces if p.prime)
                 out = [Part("main", regular.start, regular.length, False),
                        Part("prime", prime.start, prime.length, True)]
+        if self.blocker and not out[0].prime:
+            out.insert(0, Part("blocker", out[0].time - 60, 60, False))
         if self.then:
             prime = False
             if self.play in ("singles", "machine") and self.weekday is not None:
@@ -293,7 +299,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
     if not name:
         errs.append(f"{label}: needs a name.")
     known = {"name", "login", "play", "partners", "day", "date", "time", "length", "shorter_ok",
-             "courts", "skip", "active", "machine", "also", "then"}
+             "courts", "skip", "active", "machine", "also", "then", "blocker"}
     for k in raw:
         if k not in known:
             errs.append(f"{label}: '{k}' isn't a setting I know. Check the spelling.")
@@ -395,6 +401,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
 
     shorter_ok = _as_bool(raw.get("shorter_ok", False), f"{label}: shorter_ok", errs)
     active = _as_bool(raw.get("active", True), f"{label}: active", errs)
+    blocker = _as_bool(raw.get("blocker", False), f"{label}: blocker", errs)
 
     then = raw.get("then", 0)
     if then is None:
@@ -456,9 +463,18 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
 
     if len(errs) > before:
         return None
+    weekday = day if day is not None else (one_off.weekday() if one_off else None)
+    if blocker and play in ("singles", "machine") and weekday is not None \
+            and len(pieces := clubtime.split_prime(weekday, minutes, length)) == 1 and pieces[0].prime:
+        errs.append(f"{label}: a blocker can't protect a Prime Time start: "
+                    f"{clubtime.fmt_time(minutes)} books 24 hours ahead, not a week ahead. "
+                    "Choose a time outside Prime Time, or turn the blocker off.")
+        blocker = False
+    if len(errs) > before:
+        return None
     return Booking(name=name, login=login, play=play, partners=partners, time=minutes,
                    length=length, courts=courts, day=day, date=one_off, shorter_ok=shorter_ok,
-                   then=then, skip=skip, active=active, machine=machine, also=also)
+                   then=then, blocker=blocker, skip=skip, active=active, machine=machine, also=also)
 
 
 def _days_overlap(a: Booking, b: Booking) -> bool:
@@ -638,6 +654,8 @@ def booking_to_map(b: Booking) -> CommentedMap:
     m["shorter_ok"] = b.shorter_ok
     if b.then:
         m["then"] = b.then
+    if b.blocker:
+        m["blocker"] = True
     m["courts"] = _flow(b.courts)
     m["skip"] = _flow(sorted(b.skip))
     m["active"] = b.active

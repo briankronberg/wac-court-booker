@@ -36,7 +36,7 @@ class FakeSite:
                  open_courts: dict[int, list[int]] | None = None, taken_at=None,
                  answer_s: float = 2.0, unknown_on=(), report=None, grid_after_unknown=None,
                  stage_glitches: int = 0, login_fails: int = 0, bad_password: bool = False,
-                 mine=None, forced_only=False):
+                 mine=None, forced_only=False, free_courts=None, grid=None):
         self.clock = clock
         self.W = W
         self.gate_s = gate_s
@@ -58,6 +58,11 @@ class FakeSite:
         self.pending_unknown = False
         self.forced_only = forced_only  # model the old behaviour: every press is sent
         self.forced: list[bool] = []
+        # The day's court grid (what day_availability shows): every court open all day,
+        # minus `grid`'s taken (start, length) windows.
+        self.free_courts = free_courts or sorted({c for cs in (self.open_courts or {}).values() for c in cs})
+        self.grid = dict(grid or {})
+        self.cancelled: list[Slot] = []
 
     def rel(self) -> float:
         return self.clock.now() - self.W
@@ -155,6 +160,25 @@ class FakeSite:
         if self.grid_after_unknown is not None and self.report is None:
             return self.grid_after_unknown
         return self._is_open(slot.start, slot.court, slot.length)
+
+    async def day_availability(self, day, machines=False):
+        self.calls.append("day-availability")
+        await self.clock.sleep(2)
+        courts = {}
+        for c in self.free_courts:
+            sheet = [False] * 1440
+            for i in range(5 * 60, 22 * 60):
+                sheet[i] = True
+            for (s, L) in self.grid.get(c, []):
+                for i in range(s, min(s + L, 1440)):
+                    sheet[i] = False
+            courts[c] = sheet
+        return {"courts": courts, "booked": {c: [] for c in self.free_courts}, "machines": {}}
+
+    async def cancel(self, slot, tries=3):
+        self.calls.append(f"cancel:{slot.court}/{slot.start}")
+        await self.clock.sleep(3)
+        self.cancelled.append(slot)
 
 
 def booking(**kw) -> Booking:

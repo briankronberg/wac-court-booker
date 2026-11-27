@@ -7,9 +7,9 @@ Branch: `old-system-features`. Work started from `main` at v0.5.1. The owner cho
 | 1 | Clock fix just before the window | **Done** (commit ec59ead) |
 | 2 | Late start (book up to 20 min late) | **Done** (ec59ead) |
 | 3 | New speed ideas: press only on a freshly loaded, switched-on page | **Done** (ec59ead) |
-| 4 | Coordinated logins (several logins, same time, different courts, side by side) | **Started**: config and profiles done, engine/runner/UI to do |
-| 5 | Back-to-back (second session right after, same court) | To do |
-| 6 | Blockers (guard slot before the main, cancelled automatically) | To do |
+| 4 | Coordinated logins (several logins, same time, different courts, side by side) | **Done** (4fe4687..14c3083) |
+| 5 | Back-to-back (second session right after, same court) | **Done** (14c3083..92c6bb4) |
+| 6 | Blockers (guard slot before the main, cancelled automatically) | **Started**: config, scheduler and 18 tests (11 RED-confirmed); runner implementation pending — handoff: `docs/claude-code-prompt.md` + progress ledger |
 | 7 | Email summary | To do |
 
 Not chosen (don't build): phone push (ntfy), evening-before check, after-run check, nightly reservation log, rehearsal.

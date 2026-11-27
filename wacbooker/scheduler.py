@@ -56,6 +56,7 @@ def run_ps(script: str, stdin: str = "", timeout: float = 120) -> subprocess.Com
 
 PRIME_SUFFIX = " (Prime Time part)"
 NEXT_SUFFIX = " (second session)"
+BLOCKER_SUFFIX = " (blocker)"
 
 
 def task_name(booking_name: str, part: str = "main") -> str:
@@ -64,6 +65,8 @@ def task_name(booking_name: str, part: str = "main") -> str:
         return name + PRIME_SUFFIX
     if part == "next":
         return name + NEXT_SUFFIX
+    if part == "blocker":
+        return name + BLOCKER_SUFFIX
     return name
 
 
