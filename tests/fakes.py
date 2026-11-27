@@ -36,7 +36,7 @@ class FakeSite:
                  open_courts: dict[int, list[int]] | None = None, taken_at=None,
                  answer_s: float = 2.0, unknown_on=(), report=None, grid_after_unknown=None,
                  stage_glitches: int = 0, login_fails: int = 0, bad_password: bool = False,
-                 mine=None):
+                 mine=None, forced_only=False, free_courts=None, grid=None):
         self.clock = clock
         self.W = W
         self.gate_s = gate_s
@@ -56,17 +56,25 @@ class FakeSite:
         self.booked: list[Slot] = []
         self.calls: list[str] = []
         self.pending_unknown = False
+        self.forced_only = forced_only  # model the old behaviour: every press is sent
+        self.forced: list[bool] = []
+        # The day's court grid (what day_availability shows): every court open all day,
+        # minus `grid`'s taken (start, length) windows.
+        self.free_courts = free_courts or sorted({c for cs in (self.open_courts or {}).values() for c in cs})
+        self.grid = dict(grid or {})
+        self.cancelled: list[Slot] = []
 
     def rel(self) -> float:
         return self.clock.now() - self.W
 
-    def _is_open(self, court: int, length: int) -> bool:
+    def _is_open(self, start: int, court: int, length: int) -> bool:
         if court not in self.open_courts.get(length, []):
             return False
         t = self.taken_at.get((court, length))
         if t is not None and self.rel() >= t:
             return False
-        return not any(s.court == court for s in self.booked)
+        end = start + length
+        return not any(s.court == court and s.start < end and start < s.end for s in self.booked)
 
     async def login(self) -> str:
         self.calls.append("login")
@@ -82,7 +90,7 @@ class FakeSite:
         self.calls.append("find_open")
         await self.clock.sleep(3)
         return {L: {c: Slot(date, start, L, c) for c in self.open_courts.get(L, [])
-                    if self._is_open(c, L)} for L in lengths}
+                    if self._is_open(start, c, L)} for L in lengths}
 
     async def stage(self, slot: Slot) -> None:
         self.calls.append(f"stage:{slot.court}/{slot.length}")
@@ -90,7 +98,7 @@ class FakeSite:
         if self.stage_glitches > 0:
             self.stage_glitches -= 1
             raise SiteError("participants page never loaded")
-        if not self._is_open(slot.court, slot.length):
+        if not self._is_open(slot.start, slot.court, slot.length):
             raise SiteError("not in grid", "taken")
         self.staged = slot
 
@@ -101,12 +109,16 @@ class FakeSite:
     async def is_staged(self) -> bool:
         return self.staged is not None
 
-    async def attempt(self, partners) -> Attempt:
+    async def attempt(self, partners, force=False) -> Attempt:
         assert not self.pending_unknown, "pressed again over an unanswered commit"
-        self.presses += 1
         self.press_times.append(self.rel())
         slot = self.staged
         await self.clock.sleep(self.answer_s)
+        if self.rel() < self.gate_s and not force and not self.forced_only:
+            # a fresh page with its rows still off: nothing is sent
+            return Attempt(engine.NOT_READY, "the club hasn't opened this time yet (fresh page)")
+        self.presses += 1
+        self.forced.append(force)
         if self.presses in self.unknown_on:
             self.pending_unknown = True
             if self.report is True:
@@ -114,7 +126,7 @@ class FakeSite:
             return Attempt(engine.UNKNOWN)
         if self.rel() < self.gate_s:
             return Attempt(engine.REJECTED, "None of the listed individuals are eligible for enrollment.")
-        if not self._is_open(slot.court, slot.length):
+        if not self._is_open(slot.start, slot.court, slot.length):
             self.staged = None
             return Attempt(engine.REJECTED, "This time slot is no longer available.")
         self.booked.append(slot)
@@ -137,13 +149,36 @@ class FakeSite:
         self.calls.append("release")
         self.staged = None
 
+    async def close(self) -> None:
+        self.calls.append("close")
+        self.closed = True
+
     async def slot_still_open(self, slot):
         self.calls.append("grid")
         self.pending_unknown = False
         await self.clock.sleep(3)
         if self.grid_after_unknown is not None and self.report is None:
             return self.grid_after_unknown
-        return self._is_open(slot.court, slot.length)
+        return self._is_open(slot.start, slot.court, slot.length)
+
+    async def day_availability(self, day, machines=False):
+        self.calls.append("day-availability")
+        await self.clock.sleep(2)
+        courts = {}
+        for c in self.free_courts:
+            sheet = [False] * 1440
+            for i in range(5 * 60, 22 * 60):
+                sheet[i] = True
+            for (s, L) in self.grid.get(c, []):
+                for i in range(s, min(s + L, 1440)):
+                    sheet[i] = False
+            courts[c] = sheet
+        return {"courts": courts, "booked": {c: [] for c in self.free_courts}, "machines": {}}
+
+    async def cancel(self, slot, tries=3):
+        self.calls.append(f"cancel:{slot.court}/{slot.start}")
+        await self.clock.sleep(3)
+        self.cancelled.append(slot)
 
 
 def booking(**kw) -> Booking:

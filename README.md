@@ -25,13 +25,15 @@ Open **WAC Court Booker** from the Start menu or your desktop. It opens in its o
 - **My bookings:** each booking in plain words ("Every Tuesday, 6:00 to 7:30 PM, singles with Pat"), the next dates it books, when the app books them and when the PC must be on. Press **Book a court** to add one. Each booking has **Change**, **Skip a week**, **Pause** and **Remove**.
 - **My reservations:** what's actually booked on the club site, read live: the next 30 days unless you pick other dates (next 7 or 90 days, this month, the past 30 days, or any range). Tick **Include family members** to see theirs too, marked "Family". Each reservation has **Cancel**: the app asks first, warns when it's less than 24 hours away (the club charges a late-cancel fee then), cancels it on the club site and tells you when it's done.
 - **What happened:** every booking run, newest first.
-- **Settings:** your club login (test it, re-read your buddy list or family), wake timers, running while signed out, the clock check, a real test booking you can cancel straight after, which browser the app uses, and a button that puts the shortcut on your desktop (or makes it again).
+- **Settings:** your club login (test it, re-read your buddy list or family), wake timers, running while signed out, the clock check, a real test booking you can cancel straight after, an email after each booking, which browser the app uses, and a button that puts the shortcut on your desktop (or makes it again).
 
 Every change is saved and the scheduled tasks are rebuilt straight away. You can close the window any time: bookings run on their own.
 
 **Updates:** the app checks GitHub for a newer version each time it opens (or press **Check for updates** at the top). When there is one, it shows the download link and the steps.
 
 On a booking day there's nothing to do. A notification tells you how it went, for example "Booked: Ct 5, Tue 12/15 6:00 PM, 90 min", or "Not booked: no court open at 6:00 PM ... Book on the club site."
+
+**Email after each booking (optional):** in **Settings**, type the address to send to (and the account to send from, if it's different), then the account's app password. For Gmail, turn on 2-Step Verification, then make an app password (Google Account, Security, App passwords). The password goes straight into Windows Credential Manager. **Send test email** checks it works. After that, each booking run sends one short email saying how it went.
 
 ## What a booking can be
 
@@ -47,6 +49,9 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
   - **Save booking** schedules the booking: the app books it the moment the club opens that time (a week ahead, or a day ahead in Prime Time). For a one-off date the club already takes bookings for, it's greyed out.
   - **Book Now** books it on the club site straight away, after you confirm. It works once the club takes bookings for that time and is greyed out until then, or while something is still to choose; the note above the buttons says when it opens. For a weekly booking it books the soonest such day, if that's already open.
 - Booked by any of the club logins you've added on this PC.
+- **Book for another login at the same time** (for example your partner's): pick the other login and the partners it plays with. When the booking opens, each login books its own court at the same moment, on different courts, side by side when the club has them. Each login's own daily limit of 2 still applies.
+- **Play again right after:** a second session (30, 60 or 90 minutes) that starts when the first ends. It opens for booking that much later, so the app books it at its own time, on the same court if it's free. If the first one didn't get a court, the second still books: playing it alone is still play.
+- **Protect the start time:** the app books a short guard court (30 or 60 minutes) just before your time, on the court you want, so nobody can book a longer time that runs into yours. That booking opens earlier than yours, which is how it gets there first. As soon as your own booking is settled, the app cancels the guard court (it's a week away, so cancelling is free). If the club didn't answer about your booking, the guard court is kept and you're told to check the club site. The guard is skipped on a day you already have another reservation on, since the club allows 2. Not for Prime Time starts, and **Book Now** doesn't use it.
 
 ### Ball machines
 
@@ -71,12 +76,14 @@ Each booking has its own task in Task Scheduler under `\WAC Court Booker\`. It s
 
 1. signs in with a hidden browser, opens the court grid for the target day and picks the first court on your list that's open at your length;
 2. clicks through to the participants page and ticks you and your partners, then keeps the page fresh until 45 seconds before W;
-3. from W + 1 s presses **Continue to Cart** once a second. The club site turns everyone away until about W + 43–45 s; pressing early costs nothing;
-4. if your court goes to someone else, moves down your list (and to shorter lengths if you allowed that);
-5. if the site doesn't answer a press, it checks your reservation list before pressing again, so it can't double-book;
-6. gives up about 4 minutes after W and tells you to book by hand.
+3. just before W, sets its timing by the club site's own clock (to a fraction of a second);
+4. from W + 1 s reloads the participants page again and again, and presses **Continue to Cart** the moment the club opens it (usually about W + 43–45 s);
+5. if your court goes to someone else, moves down your list (and to shorter lengths if you allowed that);
+6. if the site doesn't answer a press, it checks your reservation list before pressing again, so it can't double-book;
+7. gives up about 4 minutes after W and tells you to book by hand.
 
-The PC has to be on (asleep is fine with wake timers on). If it's off at W, you get a "Not booked" toast when it next starts.
+The PC has to be on (asleep is fine with wake timers on). If it wakes up late, the app still books whatever is open, up to 20 minutes after W. Later than that, you get a "Not booked" notification when it next starts.
+
 
 ## Browsers
 

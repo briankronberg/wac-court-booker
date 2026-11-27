@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         return web.run(open_page=not args.no_open, port=args.port,
                        print_url=lambda u: print(f"Open {u}", flush=True))
     if cmd == "run":
-        return runner.run_booking(args.booking, args.part)
+        return runner.run_and_report(args.booking, args.part)
     if cmd == "version":
         print(__version__)
         return 0

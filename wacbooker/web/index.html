@@ -504,9 +504,11 @@ async function bookingAction(act, b) {
 // ------------------------------------------------------------------ booking form
 function startForm(b) {
   const login = b ? b.login : (S.logins[0] || {}).nickname;
-  form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners], weekly: b.weekly, day: b.day, date: b.date,
-    time: b.time, length: b.length, shorter_ok: b.shorter_ok, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
-    : { login, play: "singles", machine: "genie", partners: [], weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, courts: [], any: true, errors: [], q: "" };
+  form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners],
+    also: b.also && b.also[0] ? b.also[0].login : "", also_partners: b.also && b.also[0] ? [...b.also[0].partners] : [], aq: "",
+    weekly: b.weekly, day: b.day, date: b.date,
+    time: b.time, length: b.length, shorter_ok: b.shorter_ok, then: b.then || 0, blocker: !!b.blocker, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
+    : { login, play: "singles", machine: "genie", partners: [], also: "", also_partners: [], aq: "", weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, then: 0, blocker: false, courts: [], any: true, errors: [], q: "" };
   window.scrollTo(0, 0);
   render();
 }
@@ -526,6 +528,7 @@ function summaryText(f) {
   if (f.weekly ? f.day === null : !f.date) missing.push(f.weekly ? "the day" : "the date");
   if (f.time === null) missing.push("the time");
   if (!f.courts.length && !f.any) missing.push("a court");
+  if (f.also && f.also_partners.length !== need) missing.push(need === 1 ? `${f.also}'s partner` : `${f.also}'s ${need - f.also_partners.length} more players`);
   if (missing.length) return { ok: false, text: "Still to choose: " + namesText(missing) + "." };
   let when;
   if (f.weekly) when = `Every ${DAYS[f.day]}`;
@@ -536,7 +539,9 @@ function summaryText(f) {
   const pt = primeOf(f);
   const how = !pt ? "" : pt.kind === "all" ? " Prime Time: the app books it 24 hours ahead."
     : ` Books in two parts: ${spanText(pt.main.start, pt.main.length)} a week ahead, ${spanText(pt.prime.start, pt.prime.length)} 24 hours ahead.`;
-  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${how}` };
+  const alsoTxt = f.also ? ` Also ${f.also} books a court at the same time${f.also_partners.length ? ` with ${namesText(f.also_partners)}` : ""}.` : "";
+  const thenTxt = f.then ? ` Back-to-back: ${spanText(f.time + f.length, f.then)} (${f.then} minutes) on the same court if it's open.` : "";
+  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${alsoTxt}${how}${thenTxt}` };
 }
 
 // Prime Time (the club's FAQ). Singles in these hours can only be booked 24 hours ahead.
@@ -619,6 +624,31 @@ function renderForm(el) {
      <div class="row" style="margin-top:8px"><input type="text" id="f-other" placeholder="Full name, as the club site shows it" style="max-width:320px"><button class="btn" id="f-addother" type="button">Add</button></div></details>`;
   if (need) h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
 
+  if (S.logins.length > 1 && f.play !== "machine") {
+    const others = S.logins.filter((l) => l.nickname !== f.login);
+    let h2 = `<div class="choices">${others.map((l) => choice("also", l.nickname, esc(l.nickname), esc(l.username))).join("")}${choice("also", "", "No")}</div>`;
+    if (f.also) {
+      const al = loginOf(f.also);
+      const aall = [...(al.family || []).map((x) => ({ n: x, fam: true })), ...(al.buddies || []).map((x) => ({ n: x, fam: false }))];
+      const aq = (f.aq || "").trim().toLowerCase();
+      const ashown = aall.filter((p) => !aq || aq.split(/\s+/).every((w) => p.n.toLowerCase().includes(w)));
+      const achips = f.also_partners.map((p, i) => `<span class="chip">${esc(p)}<button type="button" data-arm="${i}" aria-label="Take ${esc(p)} off">×</button></span>`).join("");
+      let ap = `<div class="chips">${achips || `<span class="muted">Nobody chosen yet.</span>`}</div>`;
+      if (aall.length) {
+        ap += `<input type="search" id="f-aq" placeholder="Type a name to narrow the list" value="${esc(f.aq || "")}" aria-label="Search names">
+          <div class="people">${ashown.map((p) => `<button type="button" class="person aperson" data-ap="${esc(p.n)}" aria-pressed="${f.also_partners.includes(p.n)}">${esc(p.n)}${p.fam ? `<span class="tag">FAMILY</span>` : ""}</button>`).join("") || `<p class="muted">Nobody matches. Use "Someone else" below.</p>`}</div>`;
+      } else {
+        ap += `<p class="muted">The app hasn't read ${esc(f.also)}'s buddy list yet. <button class="linkish" id="f-readab" type="button">Read it now</button> (about a minute), or type the name below.</p>`;
+      }
+      ap += `<details style="margin-top:10px" ${aall.length ? "" : "open"}><summary>Someone else (not in the list)</summary>
+         <div class="row" style="margin-top:8px"><input type="text" id="f-aother" placeholder="Full name, as the club site shows it" style="max-width:320px"><button class="btn" id="f-aaddother" type="button">Add</button></div></details>`;
+      h2 += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><p class="small muted" style="margin-bottom:8px">Who does ${esc(f.also)} play with? Choose ${need === 1 ? "1 person" : "3 people"}; family members are at the top.</p>${ap}</div>`;
+    }
+    h += sec("Also book for another login at the same time?", h2,
+      f.also ? `${esc(f.also)} books its own court at the same time with its own login, next to yours if one is free.`
+             : "Optional: another login books a court at the same time, next to yours if one is free.");
+  }
+
   h += sec("How often?", `<div class="row once-row"><div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>
      <div class="row avail"><button class="btn" id="f-cal" type="button">See Available Courts</button></div></div>`,
     "See Available Courts shows every court for the day. Press an open court there to use its date and time here.");
@@ -631,6 +661,10 @@ function renderForm(el) {
   h += sec("What time do you start?", `<select id="f-time" aria-label="Start time"><option value="">Choose a time</option>${times.map((m) => `<option value="${m}" ${f.time === m ? "selected" : ""}>${fmtTime(m)}</option>`).join("")}</select>`);
   h += sec("How long?", `<div class="choices">${[30, 60, 90].map((L) => choice("length", L, `${L} min`)).join("")}</div>
      ${f.length > 30 ? `<label class="check"><input type="checkbox" id="f-shorter" ${f.shorter_ok ? "checked" : ""}> If no court has ${f.length} minutes, take a shorter time at the same start</label>` : ""}`);
+  h += sec("Play again right after?", `<div class="choices">${choice("then", 0, "No")}${[30, 60, 90].map((v) => choice("then", v, `Yes, ${v} min`, f.time === null ? "" : `then ${spanText(f.time + f.length, v)}`)).join("")}</div>`,
+    "Back-to-back: a second session starts when the first ends, on the same court if the club has it open.");
+  if (f.play !== "machine") h += sec("Protect the start time?", `<label class="check"><input type="checkbox" id="f-blocker" ${f.blocker ? "checked" : ""}> Book a guard slot just before, then cancel it</label>`,
+    "A short court booked just before your time, on the same court, so nobody can book a longer time that runs into yours. The app cancels it as soon as your booking is settled. Not for Prime Time starts.");
   h += sec("Which courts?", `<div class="choices">${courtsFor(f).map((c) => { const k = f.courts.indexOf(c); return `<button type="button" class="choice court" data-court="${c}" aria-pressed="${k >= 0}">${c}${k >= 0 ? `<span class="order">${k + 1}</span>` : ""}</button>`; }).join("")}</div>
      <label class="check" style="margin-top:8px"><input type="checkbox" id="f-any" ${f.any ? "checked" : ""}> Any other court${f.play === "machine" ? " that takes a ball machine" : ""} if ${f.courts.length ? "those are" : "none is chosen or they're"} taken</label>`,
     "Press courts in the order you like them: first choice first. Press again to take one off. Choosing none means any court.");
@@ -665,11 +699,12 @@ function renderForm(el) {
   el.querySelectorAll(".choice[data-k]").forEach((b) => (b.onclick = () => {
     const k = b.dataset.k, v = JSON.parse(b.dataset.v);
     f[k] = v;
-    if (k === "play") { f.partners = f.partners.slice(0, needOf(f)); if (v === "machine") f.courts = f.courts.filter((c) => MACHINE_COURTS.includes(c)); }
-    if (k === "login") f.partners = [];
+    if (k === "play") { f.partners = f.partners.slice(0, needOf(f)); if (v === "machine") { f.courts = f.courts.filter((c) => MACHINE_COURTS.includes(c)); f.also = ""; f.also_partners = []; } }
+    if (k === "login") { f.partners = []; if (f.also === v) { f.also = ""; f.also_partners = []; } }
+    if (k === "also") { f.also_partners = []; f.aq = ""; }
     f.errors = []; render();
   }));
-  el.querySelectorAll(".person").forEach((b) => (b.onclick = () => {
+  el.querySelectorAll(".person:not(.aperson)").forEach((b) => (b.onclick = () => {
     const p = b.dataset.p, i = f.partners.indexOf(p);
     if (i >= 0) f.partners.splice(i, 1);
     else if (f.partners.length < need) f.partners.push(p);
@@ -679,8 +714,20 @@ function renderForm(el) {
     f.errors = []; render();
   }));
   el.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { f.partners.splice(+b.dataset.rm, 1); render(); }));
+  el.querySelectorAll("[data-arm]").forEach((b) => (b.onclick = () => { f.also_partners.splice(+b.dataset.arm, 1); render(); }));
+  el.querySelectorAll(".aperson").forEach((b) => (b.onclick = () => {
+    const p = b.dataset.ap, i = f.also_partners.indexOf(p);
+    if (i >= 0) f.also_partners.splice(i, 1);
+    else if (f.also_partners.length < need) f.also_partners.push(p);
+    else if (need === 1) f.also_partners = [p];
+    else { toast(`Doubles has 3 others. Take someone off first.`); return; }
+    if (f.also_partners.length === need) f.aq = "";
+    f.errors = []; render();
+  }));
   const qi = $("#f-q");
   if (qi) qi.oninput = () => { f.q = qi.value; const pos = qi.selectionStart; render(); const n2 = $("#f-q"); n2.focus(); n2.setSelectionRange(pos, pos); };
+  const aqi = $("#f-aq");
+  if (aqi) aqi.oninput = () => { f.aq = aqi.value; const pos = aqi.selectionStart; render(); const a2 = $("#f-aq"); a2.focus(); a2.setSelectionRange(pos, pos); };
   const addOther = () => {
     const v = $("#f-other").value.trim().replace(/\s+/g, " ");
     if (v.split(" ").length < 2) { toast("Type their first and last name.", true); return; }
@@ -689,11 +736,21 @@ function renderForm(el) {
     render();
   };
   if ($("#f-addother")) { $("#f-addother").onclick = addOther; $("#f-other").onkeydown = (e) => { if (e.key === "Enter") addOther(); }; }
+  const addAOther = () => {
+    const v = $("#f-aother").value.trim().replace(/\s+/g, " ");
+    if (v.split(" ").length < 2) { toast("Type their first and last name.", true); return; }
+    if (f.also_partners.length >= need) { if (need === 1) f.also_partners = []; else { toast("Doubles has 3 others. Take someone off first."); return; } }
+    if (!f.also_partners.includes(v)) f.also_partners.push(v);
+    render();
+  };
+  if ($("#f-aaddother")) { $("#f-aaddother").onclick = addAOther; $("#f-aother").onkeydown = (e) => { if (e.key === "Enter") addAOther(); }; }
+  if ($("#f-readab")) $("#f-readab").onclick = () => runJob({ kind: "buddies", login: f.also });
   if ($("#f-readb")) $("#f-readb").onclick = () => runJob({ kind: "buddies", login: f.login });
   if ($("#f-readf")) $("#f-readf").onclick = () => familyJob(f.login);
   if ($("#f-date")) $("#f-date").onchange = (e) => { f.date = e.target.value || null; render(); };
   $("#f-time").onchange = (e) => { f.time = e.target.value === "" ? null : +e.target.value; f.errors = []; render(); };
   if ($("#f-shorter")) $("#f-shorter").onchange = (e) => { f.shorter_ok = e.target.checked; render(); };
+  if ($("#f-blocker")) $("#f-blocker").onchange = (e) => { f.blocker = e.target.checked; render(); };
   $("#f-any").onchange = (e) => { f.any = e.target.checked; render(); };
   el.querySelectorAll("[data-court]").forEach((b) => (b.onclick = () => {
     const c = +b.dataset.court, i = f.courts.indexOf(c);
@@ -782,10 +839,11 @@ async function bookNow() {
   const f = form, ws = windowState(f);
   if (!ws.nowOk) return;
   const day = new Date(ws.nowDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
+  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}${f.also ? ` (${f.also} books a court at the same time)` : ""}. ${f.then ? `It also books the ${f.then}-minute second session right after, if the club has it open. ` : ""}The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
   if (!ok) return;
-  const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners, date: ws.nowDate,
-    time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+  const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
+    also: f.also || "", also_partners: f.also_partners || [], date: ws.nowDate,
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, blocker: f.play !== "machine" && !!f.blocker, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   const j = await runJob(body);
   if (j && j.ok) { form = null; view = "home"; }
   await refresh();
@@ -822,8 +880,9 @@ window.addEventListener("message", (e) => {
 
 async function saveForm() {
   const f = form;
-  const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners, weekly: f.weekly, day: f.day, date: f.date,
-    time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+  const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
+    also: f.also || "", also_partners: f.also_partners || [], weekly: f.weekly, day: f.day, date: f.date,
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, blocker: f.play !== "machine" && !!f.blocker, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   $("#f-save").disabled = true;
   const r = await api("/api/booking", body);
   if (!r.ok) { f.errors = r.errors || ["That wasn't saved."]; render(); return; }
@@ -988,6 +1047,16 @@ function renderSettings(el) {
       <select id="tb-partner" style="max-width:280px" aria-label="Partner"><option value="">Who would you play with?</option>${partnerOpts}</select>
       <button class="btn" id="tb-go" type="button">Make a test booking</button></div>` : `<p class="muted">Add a login first.</p>`}</div>`;
 
+  h += `<div class="card"><h3>Email after each booking</h3>
+    <p class="small muted">A short email after each booking run saying how it went. It's sent from your own mail account: for Gmail, turn on 2-Step Verification, then make an app password (Google Account, Security, App passwords) and paste it here. It goes straight into Windows Credential Manager, never into a file.</p>
+    <div class="row"><input type="email" id="em-to" placeholder="Send to: name@gmail.com" value="${esc(st.email_to || "")}" style="max-width:280px" aria-label="Send to">
+      <input type="email" id="em-from" placeholder="Send from (if different)" value="${esc(st.email_from || "")}" style="max-width:280px" aria-label="Send from">
+      <button class="btn" id="em-save" type="button">Save</button></div>
+    ${st.email_to ? `<div class="row" style="margin-top:8px"><input type="password" id="em-pw" placeholder="${st.email_password_saved ? "App password saved (type to replace)" : "App password"}" style="max-width:280px" aria-label="App password" autocomplete="off">
+      <button class="btn" id="em-pwsave" type="button">Save password</button>
+      <button class="btn" id="em-test" type="button" ${st.email_password_saved ? "" : "disabled"}>Send test email</button>
+      ${st.email_password_saved ? `<button class="linkish" id="em-forget" type="button">Forget the password</button>` : ""}</div>` : ""}</div>`;
+
   h += `<div class="card"><h3>Browser the app uses</h3>
     <div class="choices" style="margin-top:10px">${[["hidden", "Hidden (normal)", "The app's own browser, no window"], ["edge", "Microsoft Edge", "Separate profile"], ["chrome", "Google Chrome", "Separate profile"]]
       .map(([v, a, b]) => `<button type="button" class="choice" data-br="${v}" aria-pressed="${st.browser === v}">${a}<small>${b}</small></button>`).join("")}</div>
@@ -1015,6 +1084,10 @@ function renderSettings(el) {
     }
   }));
   if ($("#wake")) $("#wake").onclick = async () => { const r = await api("/api/wake-timers", {}); toast(r.ok ? "Wake timers are on." : "Not changed: " + r.message, !r.ok); refresh(); };
+  if ($("#em-save")) $("#em-save").onclick = async () => { await afterSave(await api("/api/settings", { email_to: $("#em-to").value.trim(), email_from: $("#em-from").value.trim() }), "Saved."); refresh(); };
+  if ($("#em-pwsave")) $("#em-pwsave").onclick = async () => { const el = $("#em-pw"); const pw = el.value; el.value = ""; if (!pw) return; await afterSave(await api("/api/email-password", { password: pw }), "Password saved."); refresh(); };
+  if ($("#em-forget")) $("#em-forget").onclick = async () => { await afterSave(await api("/api/email-password", { forget: true }), "Forgotten."); refresh(); };
+  if ($("#em-test")) $("#em-test").onclick = () => runJob({ kind: "test-email" });
   $("#so-no").onclick = async () => { if (st.run_signed_out) { await afterSave(await api("/api/settings", { run_signed_out: false }), "Bookings run while you're signed in."); refresh(); } };
   $("#so-yes").onclick = async () => { if (!st.run_signed_out) { await afterSave(await api("/api/settings", { run_signed_out: true }), "Saved."); refresh(); } };
   if ($("#so-pw")) $("#so-pw").onclick = askWindowsPassword;

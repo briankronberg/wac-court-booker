@@ -1,6 +1,6 @@
 # wac-court-booker: design
 
-A simple, shareable tool that books tennis courts at WAC Hartland the moment each slot becomes bookable (169 hours before it starts). It's a cut-down sibling of the author's own booking system: one booking per entry, no blockers, no back-to-back logic, set up and changed through a plain menu.
+A simple, shareable tool that books tennis courts at WAC Hartland the moment each slot becomes bookable (169 hours before it starts). It started as a cut-down sibling of the author's own booking system; since 0.6.0 it also has that system's coordinated logins, back-to-back sessions, guard slots (blockers) and email summaries, all set up through the same page.
 
 Status: design draft for review. Windows only for the first release.
 
@@ -13,13 +13,13 @@ WAC Hartland members who aren't technical. If someone can download a zip, double
 | In | Out (v1) |
 |---|---|
 | Book singles or doubles at WAC Hartland | Other clubs or WAC locations |
-| 30, 60 or 90 minutes, with an optional "fall back to shorter" | Back-to-back slots (book a second entry instead) |
-| A court preference list, any order or subset, optionally ending in `any` | Blockers |
+| 30, 60 or 90 minutes, with an optional "fall back to shorter", and an optional second session right after | |
+| A court preference list, any order or subset, optionally ending in `any`, and an optional guard slot before the start | |
 | Weekly bookings and one-off dates, with skip dates | Cancelling real bookings (players use the club's site or phone) |
-| Several club logins on one PC, chosen per booking | Email or phone push alerts |
+| Several club logins on one PC, chosen per booking, and logins booking together | Phone push alerts |
 | Runs in the background with a hidden browser, wakes the PC from sleep, can run signed out | Mac (later) |
 | A full test: login, dry run, buddy list, clock check, and a real test booking that can be cancelled | |
-| Windows toast notification and a log file for every run | |
+| Windows toast notification and a log file for every run, and an optional email | |
 
 ## The user's journey
 
@@ -189,6 +189,41 @@ A setting in the menu (**Logins → Browser**, and in `bookings.yaml` as `browse
 - Edge and Chrome run with **their own separate profile** in the app's folder, never the person's everyday profile. Their bookmarks, saved passwords and open tabs are never touched, and the booking can run while they're browsing. (Chrome and Edge also refuse automation on a person's everyday profile.)
 - Firefox and Safari aren't supported.
 - Setup tries `hidden` first. If it can't download or start, setup offers Edge and says why. "Test everything" runs with whichever browser is set, so a switch can be checked at once.
+
+## Timing at the window
+
+- `RealClock` starts from PC time plus the internet-time correction and then runs on `time.monotonic()`, so Windows adjusting its clock during the wait can't move W.
+- Just before the window (after the last keep-alive, at least 8 s before W), `RealClock.resync()` reads the club server's own clock: HEAD requests over one kept-open connection until the `Date` header ticks over (`clock.server_offset`, about ±0.06 s). The logins of one run share the clock and the read.
+- The participants page shows its rows switched off until the club opens the time, and only a fresh load shows them on. In the author's real windows every accepted booking was a press straight after such a load, and presses on a switched-off page were all refused (one went unanswered for a minute). So `ClubSite.attempt` reloads back to back while the rows are off (`fresh_gap` 0.5 s, `row_watch` 2 s) and presses only once they're on; from W + 75 s the engine forces a press every 15 s as a fallback.
+- A run that starts late (the PC was off or asleep) still books what's open, up to 20 minutes after W (`clubtime.LATE_OK`), with the usual 4 minutes of pressing counted from when it starts.
+
+## Coordinated logins
+
+- A booking's `also:` list adds more logins (each with its own partners) that book the same time with the same courts and lengths. `Booking.members` is the booking's own login first, then those.
+- One scheduled task runs them all at once (`runner.run_group`): one browser per login, each with its own throwaway profile (two Edge or Chrome sessions never share one), one shared clock, and a `group.Group` that hands out different courts. With nobody placed yet it takes the best block of courts in a row; once someone has a court, the others sit next to it when they can (same bank, one apart).
+- Each login gets one line in results.jsonl (`login=`), and the group gets one notification. A Prime Time part or a second session puts each login's own court from the first part first.
+
+## Second session (back-to-back)
+
+- `then: 30|60|90` adds a part `next` from the booking's end, with its own task (" (second session)") and window, on the court the first part got (per login), else by preference. Unlike the Prime Time part it still books when the first part didn't. Refused where either session would cross a Prime Time edge for singles.
+- It counts as a second reservation of the day for every login.
+
+## Guard slots (blockers)
+
+- `blocker: true` adds a part `blocker` with its own task, an hour before the main task (" (blocker)"). Not for a main part that books 24 hours ahead (Prime Time singles or ball machines).
+- The guard run signs in and skips the day if the login already has a reservation on it (guard + booking + that one would be 3). It reads the day's court sheet and plans with `runner.plan_blocker`: the earliest of main − 60 and main − 30 that is free right up to the start, on a court also free when play starts, in preference order. It then books that one slot with the usual engine, at the slot's own window. Coordinated logins plan in turn, on different courts, next to each other when possible. Each guard is recorded with its start and length. The run has its own lock, because the main task starts while it's still going.
+- The main run looks the guard up after its wait (`runner.guard_slot`), tries the guard's court first, and in the same session, once its outcome is known, cancels the guard (`settle_guard`, a week ahead so free) and records the cancel. If the outcome is unknown, the guard is kept and the notification says to check the club site; if the cancel fails, it says to cancel it there.
+- **Backstop:** the guard run stays up until 25 minutes after the main window (`_guard_backstop`; the task's 3-hour limit covers it). If the main run hasn't settled a guard by then (the booking was paused, skipped or removed, the PC missed the window, or the run crashed), the guard run cancels it itself. A guard the main run kept on purpose (outcome unknown, recorded as "kept") is left alone; a failed cancel is tried again.
+- For singles, a guard never goes in Prime Time (it opens only 24 hours ahead there), so a main starting right after Prime Time gets an earlier-free guard or none.
+- The guard is booked with the booking's partners (the club needs a family or buddy member on every booking), so a partner who already has a reservation that day can have the main refused while the guard holds their second.
+- Book Now never books a guard: once play opens, every earlier slot is open too, so it would protect nothing.
+- A guard doesn't count toward the 2 a day (`Booking.reservations`), since it's gone before the second session's window.
+
+## Email summary
+
+- `email_to`, `email_from` (empty = `email_to`), `smtp_host` (smtp.gmail.com) and `smtp_port` (465) in bookings.yaml. The app password is in Credential Manager under "WAC Court Booker email", keyed by the sending address (`mail.py`), and never in a file, log or email.
+- The scheduled task runs `runner.run_and_report`: the run, then one plain email with what that run's notifications said. Below a "details for troubleshooting" divider it adds only the engine's timing lines, never the "signed in as" line or the booking's description, and any number of 5 or more digits is masked. A guard-slot run emails only when its outcome is unknown; otherwise the booking's own run reports the guard.
+- **Settings → Email after each booking** saves the addresses and the password and has **Send test email**.
 
 ## Lessons carried over from the author's system
 

@@ -1,11 +1,15 @@
 """Check the PC clock against internet time (SNTP, with an HTTP Date fallback)."""
 from __future__ import annotations
 
+import http.client
 import socket
 import struct
 import time
 import urllib.request
 from email.utils import parsedate_to_datetime
+
+CLUB_HOST = "hnd-p-ols.spectrumng.net"
+CLUB_PATH = "/LCRAC/Login.aspx"
 
 NTP_SERVERS = ("time.windows.com", "pool.ntp.org", "time.google.com")
 NTP_EPOCH = 2208988800
@@ -38,6 +42,45 @@ def http_offset(url: str = "https://hnd-p-ols.spectrumng.net/LCRAC/Login.aspx") 
         date = r.headers.get("Date")
     t2 = time.time()
     return parsedate_to_datetime(date).timestamp() + 0.5 - (t1 + t2) / 2
+
+
+def server_offset(host: str = CLUB_HOST, path: str = CLUB_PATH, budget: float = 4.0,
+                  conn_factory=None, now=time.time) -> tuple[float, float]:
+    """(offset, uncertainty) in seconds: the club server's clock - PC time, to a fraction
+    of a second. The Date header only has whole seconds, so ask quickly over one kept-open
+    connection until it ticks over: the server's next second started between the two
+    answers either side of the tick. Raises OSError if it can't be measured."""
+    conn = (conn_factory or (lambda: http.client.HTTPSConnection(host, timeout=5)))()
+    best: tuple[float, float] | None = None
+    prev: tuple[float, float, int] | None = None   # (sent, answered, server second)
+    end = now() + budget
+    try:
+        while now() < end:
+            t1 = now()
+            conn.request("HEAD", path, headers={"Connection": "keep-alive"})
+            r = conn.getresponse()
+            r.read()
+            t2 = now()
+            sec = int(parsedate_to_datetime(r.getheader("Date")).timestamp())
+            if prev and sec == prev[2] + 1:
+                # The server's second `sec` began after it stamped the previous answer
+                # (no earlier than that request was sent) and before it stamped this one
+                # (no later than this answer arrived).
+                lo, hi = prev[0], t2
+                off, unc = sec - (lo + hi) / 2, (hi - lo) / 2
+                if best is None or unc < best[1]:
+                    best = (off, unc)
+                if unc < 0.15:
+                    break
+            prev = (t1, t2, sec)
+    except (OSError, http.client.HTTPException, TypeError, ValueError) as e:
+        if best is None:
+            raise OSError(f"club clock not readable: {e}") from e
+    finally:
+        conn.close()
+    if best is None:
+        raise OSError("the club clock didn't tick over in time")
+    return best
 
 
 def measure() -> tuple[float | None, str]:

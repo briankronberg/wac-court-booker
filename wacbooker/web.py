@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from . import APP_NAME, __version__, clock, clubtime, config, creds, live, notify, paths, results, runner, scheduler
+from . import APP_NAME, __version__, clock, clubtime, config, creds, live, mail, notify, paths, results, runner, scheduler
 from . import site as site_mod
 from .config import Booking, Login
 from .engine import SiteError
@@ -81,7 +82,11 @@ def prime_note(b: Booking) -> dict | None:
     if kind == "all":
         return {"kind": "all", "text": f"Prime Time: the club opens {what} only 24 hours "
                                        "ahead, so the app books it then, not a week ahead."}
-    main, prime = b.part("main"), b.part("prime")
+    prime = next((p for p in b.parts if p.key == "prime"), None)
+    if prime is None:  # a second session next to a Prime Time session: the session itself books 24 hours ahead
+        return {"kind": "all", "text": f"Prime Time: the club opens {what} only 24 hours "
+                                       "ahead, so the app books it then, not a week ahead."}
+    main = b.part("main")
     return {"kind": "split", "text": (
         f"{span_text(prime.time, prime.length)} is Prime Time, when the club opens {what} only "
         f"24 hours ahead. So the app books this in two parts: {span_text(main.time, main.length)} a week "
@@ -90,25 +95,33 @@ def prime_note(b: Booking) -> dict | None:
         f"all inside or all outside Prime Time.")}
 
 
-def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict | None = None) -> dict:
+def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict | None = None,
+                 next_task: dict | None = None, blocker_task: dict | None = None) -> dict:
     weekly = b.day is not None
     when = f"Every {clubtime.DAYS[b.day]}" if weekly else f"{b.date:%A}, {b.date:%B} {b.date.day}"
     v: dict[str, Any] = {
         "name": b.name, "login": b.login, "play": b.play, "machine": b.machine, "partners": b.partners, "day": b.day,
         "date": b.date.isoformat() if b.date else None, "time": b.time, "length": b.length,
+        "then": b.then,
+        "blocker": b.blocker,
         "shorter_ok": b.shorter_ok, "courts": b.courts, "active": b.active,
         "skip": [d.isoformat() for d in b.skip],
-        "title": f"{when}, {span_text(b.time, b.length)}",
-        "who": b.what + (f" with {names_text(b.partners)}" if b.partners else ""),
+        "title": f"{when}, {span_text(b.time, b.length)}"
+                 + (f", second session {b.then} min right after" if b.then else "")
+                 + (", guard slot first" if b.blocker else ""),
+        "who": b.what + (f" with {names_text(b.partners)}" if b.partners else "")
+              + "".join(f"; also {m.login} with {names_text(m.partners)}" for m in b.also),
+        "also": [{"login": m.login, "partners": m.partners} for m in b.also],
         "courts_text": courts_text(b.courts) + (f". Shorter if no court has {b.length} minutes."
                                                 if b.shorter_ok else "."),
         "weekly": weekly,
         "prime": prime_note(b),
     }
     runs = []
-    split = b.prime_kind == "split"
+    prime = next((p for p in b.parts if p.key == "prime"), None)
+    split = prime is not None
     for o in b.next_runs(now - clubtime.LATE_OK, 2):
-        on = o.run_at
+        on = o.run_at - timedelta(minutes=60) if b.blocker else o.run_at
         pc = clubtime.fmt_time(on.hour * 60 + on.minute)
         if on.date() != o.window.date():
             pc = f"{md(on.date())}, {pc}"
@@ -130,7 +143,7 @@ def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict 
         v["task"] = {"ok": True, "text": "This date has passed. Remove it when you like."}
     elif not b.active:
         v["task"] = {"ok": True, "text": "Paused: nothing books until you turn it back on."}
-    elif not task or (split and not prime_task):
+    elif not task or (split and not prime_task) or (b.then and not next_task) or (b.blocker and not blocker_task):
         v["task"] = {"ok": False, "text": "Not scheduled yet. Open Settings and press \"Rebuild scheduled tasks\"."}
     else:
         how = ("even when you're signed out" if task.get("logon") == "Password"
@@ -184,6 +197,14 @@ class Job:
                 "done": self.done, "ok": self.ok, "question": self.question, "data": self.data}
 
 
+def send_test_email(cfg: config.Config, say) -> bool:
+    """The Settings page's "Send test email": one short email, and what happened."""
+    ok, why = mail.send(cfg, "Test", "This is a test email from WAC Court Booker. After each booking "
+                                     "run you'll get a short one like it saying how it went.")
+    say(f"Test email {why}." if ok else f"The test email wasn't sent: {why}.")
+    return ok
+
+
 # ---------------------------------------------------------------- the app
 
 class WebApp:
@@ -231,13 +252,17 @@ class WebApp:
             "errors": cfg.errors, "warnings": cfg.warnings, "config_file": str(paths.config_file()),
             "logins": logins,
             "bookings": [booking_view(b, now, tasks.get(scheduler.task_name(b.name)),
-                                      tasks.get(scheduler.task_name(b.name, "prime"))) for b in cfg.bookings],
+                                      tasks.get(scheduler.task_name(b.name, "prime")),
+                                      tasks.get(scheduler.task_name(b.name, "next")),
+                                      tasks.get(scheduler.task_name(b.name, "blocker"))) for b in cfg.bookings],
             "prime_time": {"text": clubtime.PRIME_TEXT,
                            "spans": [[list(days), a, z] for days, a, z in clubtime.PRIME_TIME]},
             "settings": {"browser": cfg.browser, "show_window": cfg.show_window,
                          "run_signed_out": cfg.run_signed_out, "wake_timers": scheduler.wake_timers_on(),
                          "windows_password_held": bool(self.windows_password),
-                         "desktop_shortcut": desktop_shortcut_path().exists()},
+                         "desktop_shortcut": desktop_shortcut_path().exists(),
+                         "email_to": cfg.email_to, "email_from": cfg.email_from,
+                         "email_password_saved": mail.has_password(mail.sender(cfg))},
             "other_timezone": local.utcoffset() != now.utcoffset(),
             "courts": list(config.COURTS),
             "job": self.job.view() if self.job else None,
@@ -331,6 +356,17 @@ class WebApp:
             "skip": [d.isoformat() for d in old.skip] if old else [],
             "active": old.active if old else True,
         }
+        also = str(body.get("also") or "").strip()
+        if also:
+            raw["also"] = [{"login": also, "partners": [p.strip() for p in (body.get("also_partners") or [])
+                                                       if p.strip()]}]
+        if body.get("then"):
+            try:
+                raw["then"] = int(body["then"])
+            except (TypeError, ValueError):
+                raise UserError("The second session's length should be 30, 60 or 90 minutes.")
+        if body.get("blocker"):
+            raw["blocker"] = True
         if body.get("weekly", True):
             if body.get("day") is None:
                 raise UserError("Choose a day of the week.")
@@ -444,6 +480,13 @@ class WebApp:
                 if not body["run_signed_out"]:
                     self.windows_password = None
                 changed.append(f"run while signed out: {'yes' if body['run_signed_out'] else 'no'}")
+            for key in ("email_to", "email_from"):
+                if key in body:
+                    val = str(body[key] or "").strip()
+                    if val and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", val):
+                        raise UserError(f"That isn't an email address: {val}")
+                    config.set_setting(doc, key, val)
+                    changed.append(f"{key.replace('_', ' ')} {val or 'off'}")
             return self._commit(doc, ", ".join(changed) or "settings")
 
     def windows_password_set(self, body: dict) -> dict:
@@ -459,6 +502,24 @@ class WebApp:
             out["ok"] = not out.get("task_errors") and not out.get("task_problem")
             out["signed_out"] = bool(self.windows_password)
             return out
+
+    def email_password_set(self, body: dict) -> dict:
+        """The mail account's app password: straight into Credential Manager, never a file."""
+        pw = str(body.get("password") or "")
+        body["password"] = ""
+        _, cfg = self._load()
+        who = mail.sender(cfg)
+        if body.get("forget"):
+            if who:
+                mail.delete_password(who)
+            return {"ok": True}
+        if not who:
+            raise UserError("Save the email address first.")
+        if not pw:
+            raise UserError("Type the email app password.")
+        mail.set_password(who, pw)
+        del pw
+        return {"ok": True}
 
     def rebuild(self) -> dict:
         with self.lock:
@@ -485,10 +546,11 @@ class WebApp:
                       "dry-run": "Looking at the court sheet", "clock": "Checking the PC clock",
                       "test-booking": "Test booking", "court-check": "Validate booking",
                       "calendar": "Court calendar", "reservations": "My reservations",
-                      "cancel": "Cancel a reservation", "book-now": "Book now"}
+                      "cancel": "Cancel a reservation", "book-now": "Book now",
+                      "test-email": "Sending a test email"}
             if kind not in titles:
                 raise UserError("Unknown check.")
-            if kind != "clock" and not login:
+            if kind not in ("clock", "test-email") and not login:
                 raise UserError("Add your club login first.")
             job = Job(kind, titles[kind])
             work = self._job_work(kind, job, cfg, login, body)
@@ -508,6 +570,8 @@ class WebApp:
 
     def _job_work(self, kind: str, job: Job, cfg: config.Config, login: Login | None, body: dict) -> Callable:
         say = job.say
+        if kind == "test-email":
+            return lambda: send_test_email(cfg, say)
         if kind == "clock":
             def work():
                 ok, msg = clock.report()
@@ -816,6 +880,7 @@ def make_handler(app: WebApp, token: str, port_ref: list[int]):
                 "/api/login/remove": lambda: app.remove_login(body),
                 "/api/settings": lambda: app.settings(body),
                 "/api/windows-password": lambda: app.windows_password_set(body),
+                "/api/email-password": lambda: app.email_password_set(body),
                 "/api/rebuild": app.rebuild,
                 "/api/wake-timers": app.wake_timers,
                 "/api/job": lambda: app.start_job(body),

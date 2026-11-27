@@ -135,3 +135,62 @@ def test_next_runs_skip_dates(tmp_path):
     b = cfg.bookings[0]
     runs = b.next_runs(clubtime.slot_start(date(2026, 12, 1), 0), count=2)
     assert [r.day for r in runs] == [date(2026, 12, 8), date(2026, 12, 22)]
+
+
+ALSO = """\
+    also:
+      - login: partner
+        partners: [Andrea Kronberg, Dan Ford, Eli Grant]
+"""
+
+
+def test_also_parses_members_and_for_member(tmp_path):
+    p, doc, cfg = load_text(tmp_path, GOOD.replace("    active: true", ALSO + "    active: true"))
+    assert cfg.ok, cfg.errors
+    b = cfg.bookings[0]
+    assert [m.login for m in b.members] == ["me", "partner"]
+    pm = b.for_member(b.members[1])
+    assert (pm.login, pm.also) == ("partner", [])
+    assert pm.partners == ["Andrea Kronberg", "Dan Ford", "Eli Grant"]
+
+
+def test_also_round_trips(tmp_path):
+    p, doc, cfg = load_text(tmp_path, GOOD.replace("    active: true", ALSO + "    active: true"))
+    config.save(doc, p)
+    _, cfg2 = config.load(p)
+    assert cfg2.ok, cfg2.errors
+    assert [(m.login, m.partners) for m in cfg2.bookings[0].members[1:]] == [
+        ("partner", ["Andrea Kronberg", "Dan Ford", "Eli Grant"])]
+
+
+def test_also_unknown_login_is_an_error(tmp_path):
+    text = GOOD.replace("    active: true", ALSO.replace("login: partner", "login: nobody") + "    active: true")
+    _, _, cfg = load_text(tmp_path, text)
+    assert any("no login called" in e and "nobody" in e for e in cfg.errors)
+
+
+def test_blocker_refused_for_a_ball_machine():
+    errs = []
+    b = config.parse_booking({"name": "m", "login": "me", "play": "machine", "day": "Saturday",
+                              "time": "1:00 PM", "length": 60, "courts": [8, "any"], "blocker": True}, 1, errs)
+    assert b is None and any("blocker" in e and "ball machine" in e for e in errs), errs
+
+
+def _then_doc(shorter_ok):
+    return {"logins": [{"nickname": "me", "username": "jsmith"}],
+            "bookings": [{"name": "Then test", "login": "me", "play": "doubles",
+                          "partners": ["Pat Lee", "Sam Ortiz", "Kim Park"], "day": "Tuesday",
+                          "time": "9:00 AM", "length": 90, "shorter_ok": shorter_ok, "then": 60,
+                          "courts": [5, "any"]}]}
+
+
+def test_then_with_shorter_ok_warns_about_a_gap():
+    cfg = config.from_doc(_then_doc(True))
+    assert cfg.ok, cfg.errors
+    assert "gap" in " ".join(cfg.warnings)
+
+
+def test_then_without_shorter_ok_has_no_gap_warning():
+    cfg = config.from_doc(_then_doc(False))
+    assert cfg.ok, cfg.errors
+    assert "gap" not in " ".join(cfg.warnings)

@@ -342,6 +342,24 @@ def report_has(rows: list[str], slot: Slot) -> bool:
     return False
 
 
+def sweep_profiles(max_age_hours: float = 24.0) -> int:
+    """Delete throwaway browser profiles left by runs that were killed. Returns how many."""
+    import shutil
+    root = paths.home() / "profiles"
+    if not root.exists():
+        return 0
+    cutoff = time.time() - max_age_hours * 3600
+    n = 0
+    for d in root.iterdir():
+        try:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 class ClubSite:
     """One sign-in, one browser page. Implements engine.Site."""
 
@@ -364,8 +382,8 @@ class ClubSite:
         self.family_url = ""
         self.staged: Slot | None = None
         self.last_fresh = 0.0
-        self.fresh_gap = 3.0
-        self.row_watch = 8.0
+        self.fresh_gap = 0.5   # fresh loads go back to back while the rows are off
+        self.row_watch = 2.0   # rows that are on show within a moment of the page
         self.confirm_wait = 60.0
 
     # ---------------------------------------------------------------- plumbing
@@ -395,8 +413,10 @@ class ClubSite:
                 self.page = await self.ctx.new_page()
             else:
                 channel = {"edge": "msedge", "chrome": "chrome"}[self.browser]
-                prof = paths.profile_dir(self.browser)
+                sweep_profiles()
+                prof = paths.profile_dir(self.browser, f"{self.username}-{os.getpid()}-{id(self) % 100000}")
                 prof.mkdir(parents=True, exist_ok=True)
+                self._profile = prof
                 self.ctx = await self.pw.chromium.launch_persistent_context(
                     str(prof), channel=channel, headless=not self.show_window,
                     viewport={"width": 1440, "height": 900})
@@ -433,6 +453,10 @@ class ClubSite:
         except Exception:  # noqa: BLE001
             pass
         self.pw = self.ctx = self.br = self.page = None
+        prof, self._profile = getattr(self, "_profile", None), None
+        if prof is not None:  # a throwaway profile: sign-in is fresh every run anyway
+            import shutil
+            shutil.rmtree(prof, ignore_errors=True)
 
     async def js(self, expr: str, arg=None, timeout: float = 15):
         try:
@@ -851,9 +875,16 @@ class ClubSite:
         except SiteError:
             return []
 
-    async def attempt(self, partners: list[str]) -> Attempt:
+    async def attempt(self, partners: list[str], force: bool = False) -> Attempt:
         """One press of Continue to Cart from the staged page, then wait for
-        the server's answer without leaving the page."""
+        the server's answer without leaving the page.
+
+        Before the club opens the time, the participants page shows its rows switched
+        off, and only a fresh load of the page shows them switched on. In the author's
+        real windows every accepted booking was a press straight after such a fresh load;
+        presses on a switched-off page were all turned away (and one got no answer at
+        all). So while the rows are off this reloads the page back to back and only
+        presses once they're on. `force` presses anyway (a late fallback)."""
         try:
             loading = await self.js("document.readyState !== 'complete'", timeout=5)
         except SiteError:
@@ -878,6 +909,8 @@ class ClubSite:
             except SiteError as e:
                 self.log(f"fresh load failed: {e}")
             self.last_fresh = time.time()
+        if not rows_enabled(m) and not force:
+            return Attempt(NOT_READY, "the club hasn't opened this time yet (fresh page)")
         req_at = time.time()
         if rows_enabled(m):
             ids = {"check": [m["host"]["cb"]["id"]] + [r["cb"]["id"] for r in m["partners"].values()],
@@ -1019,8 +1052,8 @@ class ClubSite:
         return report_has(rows, slot)
 
     async def cancel(self, slot: Slot, tries: int = 3) -> None:
-        """Cancel one reservation via the Reservation Report. Only the test
-        booking ever calls this."""
+        """Cancel one reservation via the Reservation Report: the test booking, and a
+        booking's guard slot once the booking itself is settled."""
         want_time = f"{clubtime.fmt_time(slot.start)} to {clubtime.fmt_time(slot.end)}"
         last = ""
         for n in range(1, tries + 1):

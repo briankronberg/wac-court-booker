@@ -50,9 +50,14 @@ def browsers_dir() -> Path:
     return home() / "browsers"
 
 
-def profile_dir(browser: str) -> Path:
-    """Separate Edge/Chrome profile: never the person's everyday one."""
-    return home() / f"profile-{browser}"
+def profile_dir(browser: str, tag: str = "") -> Path:
+    """Separate Edge/Chrome profile: never the person's everyday one. Each browser
+    session gets its own folder (`tag`), so two bookings running at the same time,
+    or two logins booking together, never fight over one profile."""
+    if not tag:
+        return home() / f"profile-{browser}"
+    import re as _re
+    return home() / "profiles" / f"{browser}-{_re.sub(r'[^A-Za-z0-9_-]', '_', tag)}"
 
 
 def locks_dir() -> Path:

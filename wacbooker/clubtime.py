@@ -25,8 +25,9 @@ PRIME_TEXT = "Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:00-8:00 PM"
 # daylight saving moves W by an hour. The run then waits until STAGE_LEAD.
 TASK_LEAD = timedelta(minutes=75)
 STAGE_LEAD = timedelta(minutes=15)
-# A run looks for a window in [now - LATE_OK, now + EARLY_OK].
-LATE_OK = timedelta(minutes=4)
+# A run looks for a window in [now - LATE_OK, now + EARLY_OK]. A run that starts late
+# (the PC was off or asleep) still books whatever is open, up to 20 minutes after W.
+LATE_OK = timedelta(minutes=20)
 EARLY_OK = timedelta(hours=3)
 
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]

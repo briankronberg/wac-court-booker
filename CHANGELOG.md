@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- **Book for another login at the same time.** A booking can add another login (for example your partner's) with its own partners. When the booking opens, both book at the same moment, each in its own browser, on different courts, side by side when the club has them.
+- **Play again right after.** A booking can add a second session (30, 60 or 90 minutes) that starts when the first ends. It's booked at its own opening time, on the same court if it's free.
+- **Protect the start time.** A booking can book a short guard court just before your time, on the court you want, so nobody can book a longer time that runs into yours. The app cancels it as soon as your own booking is settled (it's a week away, so that's free).
+- **Email after each booking (optional).** Set it up in **Settings**: an address, and your mail account's app password (kept in Windows Credential Manager). Each booking run then sends one short email saying how it went. **Send test email** checks it.
+- **Faster at the opening moment.** The app sets its timing by the club site's own clock just before the booking opens. It then reloads the booking page again and again and presses the moment the club opens it. In the author's earlier system, that's how every successful booking was won.
+- **Late starts still book.** If the PC wakes up late, the app still books whatever is open, up to 20 minutes after the booking opened (it used to give up after 4).
+- **Fix:** two bookings running at the same time in Edge or Chrome no longer get in each other's way.
+
 ## 0.5.1
 
 - **Reset** on the booking form, next to **Cancel**: clears every field back to the start. When you're changing a saved booking, it puts the fields back to how the booking was saved.

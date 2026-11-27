@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from wacbooker import clubtime, config, creds, scheduler, web
+from wacbooker import clubtime, config, creds, mail, scheduler, web
 
 
 @pytest.fixture
@@ -138,6 +138,12 @@ def test_mistakes_come_back_in_plain_words(srv):
     assert not r["ok"] and "overlap" in r["errors"][0]
 
 
+def test_bad_second_session_length_is_a_plain_error(srv):
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4, then="abc"))
+    assert not r["ok"] and "second session" in " ".join(r["errors"])
+
+
 def test_no_booking_without_a_login(srv):
     _, r = call(srv, "/api/booking", booking())
     assert not r["ok"] and "login" in r["errors"][0]
@@ -161,6 +167,84 @@ def test_remove_login_refused_while_bookings_use_it(srv):
     call(srv, "/api/booking", booking())
     _, r = call(srv, "/api/login/remove", {"login": "me"})
     assert not r["ok"] and "use it" in r["errors"][0]
+
+
+def test_also_login_saves_shows_and_cleans(srv):
+    """'Also book for another login at the same time': its login and partners are saved,
+    the My-bookings description says so, and leaving it out of an edit takes them out."""
+    add_login(srv)
+    st, r = call(srv, "/api/login", {"username": "jdoe", "password": "***"})
+    assert st == 200 and r["ok"], r
+    _, r = call(srv, "/api/booking", booking(play="doubles",
+                                             partners=["Pat Lee", "Sam Ortiz", "Kim Park"],
+                                             also="jdoe", also_partners=["A B", "C D", "E F"]))
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["who"] == "Doubles with Pat Lee, Sam Ortiz and Kim Park; also jdoe with A B, C D and E F"
+    assert b["also"] == [{"login": "jdoe", "partners": ["A B", "C D", "E F"]}]
+    _, r = call(srv, "/api/booking", booking(old_name=b["name"], play="doubles",
+                                             partners=["Pat Lee", "Sam Ortiz", "Kim Park"]))
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["also"] == [] and b["who"] == "Doubles with Pat Lee, Sam Ortiz and Kim Park"
+
+
+def test_also_not_saved_for_ball_machines(srv):
+    add_login(srv)
+    call(srv, "/api/login", {"username": "jdoe", "password": "***"})
+    _, r = call(srv, "/api/booking", booking(play="machine", partners=[], courts=[2, 3, "any"],
+                                             also="jdoe", also_partners=[]))
+    assert not r["ok"] and "ball machine" in " ".join(r["errors"])
+
+
+def test_then_booking_warns_when_the_second_task_is_missing(srv, monkeypatch):
+    """The second session is its own scheduled task; without it nothing would ever book it."""
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4, then=60))
+    assert r["ok"], r
+    name = r["name"]
+    main = {"name": scheduler.task_name(name), "logon": "InteractiveToken"}
+    nxt = {"name": scheduler.task_name(name, "next"), "logon": "InteractiveToken"}
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert ", second session 60 min right after" in b["title"]
+    assert b["task"]["ok"] is False and "Rebuild" in b["task"]["text"]
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main, nxt])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["task"]["ok"] is True and "Scheduled" in b["task"]["text"]
+
+
+def test_blocker_booking_saves_and_warns_when_the_guard_task_is_missing(srv, monkeypatch):
+    """The guard slot is its own scheduled task, an hour before the booking's own."""
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4, blocker=True))
+    assert r["ok"], r
+    name = r["name"]
+    main = {"name": scheduler.task_name(name), "logon": "InteractiveToken"}
+    blk = {"name": scheduler.task_name(name, "blocker"), "logon": "InteractiveToken"}
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["blocker"] is True
+    assert "guard slot first" in b["title"]
+    assert b["task"]["ok"] is False and "Rebuild" in b["task"]["text"]
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main, blk])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["task"]["ok"] is True and "Scheduled" in b["task"]["text"]
+
+
+def test_blocker_off_by_default(srv):
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4))
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["blocker"] is False and "guard" not in b["title"]
 
 
 def test_quit_stops_the_server(srv):
@@ -255,3 +339,59 @@ def test_desktop_shortcut_points_at_the_window(srv, monkeypatch, tmp_path):
     assert seen["WACB_TARGET"] == str(exe) and seen["WACB_LNK"] == str(link)
     assert (tmp_path / "desktop-shortcut.txt").read_text().strip() == "Yes"
     assert call(srv, "/api/state")[1]["settings"]["desktop_shortcut"] is True
+
+
+def fake_mail_vault(monkeypatch):
+    vault = {}
+    monkeypatch.setattr(mail, "set_password", lambda a, p: vault.__setitem__(a.lower(), p))
+    monkeypatch.setattr(mail, "has_password", lambda a: bool(a) and a.lower() in vault)
+    monkeypatch.setattr(mail, "delete_password", lambda a: vault.pop(a.lower(), None))
+    return vault
+
+
+def test_email_settings_save_and_show(srv, monkeypatch, tmp_path):
+    fake_mail_vault(monkeypatch)
+    _, r = call(srv, "/api/settings", {"email_to": "me@example.com", "email_from": ""})
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    s = state["settings"]
+    assert s["email_to"] == "me@example.com" and s["email_from"] == ""
+    assert s["email_password_saved"] is False
+    _, bad = call(srv, "/api/settings", {"email_to": "not an address"})
+    assert not bad["ok"] and "email" in " ".join(bad["errors"]).lower()
+
+
+def test_email_password_goes_to_the_vault_only(srv, monkeypatch, tmp_path):
+    vault = fake_mail_vault(monkeypatch)
+    call(srv, "/api/settings", {"email_to": "me@example.com"})
+    _, r = call(srv, "/api/email-password", {"password": "app-password-123"})
+    assert r["ok"], r
+    assert vault == {"me@example.com": "app-password-123"}
+    assert "app-password-123" not in json.dumps(r)
+    assert "app-password-123" not in (tmp_path / "bookings.yaml").read_text(encoding="utf-8")
+    _, state = call(srv, "/api/state")
+    assert state["settings"]["email_password_saved"] is True
+    _, r = call(srv, "/api/email-password", {"forget": True})
+    assert r["ok"] and vault == {}
+
+
+def test_email_password_needs_an_address_first(srv, monkeypatch):
+    fake_mail_vault(monkeypatch)
+    _, r = call(srv, "/api/email-password", {"password": "app-password-123"})
+    assert not r["ok"] and "address" in " ".join(r["errors"]).lower()
+
+
+def test_test_email_job_needs_no_club_login(srv):
+    _, r = call(srv, "/api/job", {"kind": "test-email"})
+    assert r["ok"], r
+
+
+def test_send_test_email_reports_the_outcome(monkeypatch):
+    sent = []
+    monkeypatch.setattr(mail, "send", lambda cfg, subject, summary, details=(): sent.append(subject) or (True, "sent to me@example.com"))
+    lines = []
+    assert web.send_test_email(config.Config(email_to="me@example.com"), lines.append) is True
+    assert sent == ["Test"] and "sent to me@example.com" in lines[-1]
+    monkeypatch.setattr(mail, "send", lambda *a, **k: (False, "no saved email password for me@example.com"))
+    assert web.send_test_email(config.Config(email_to="me@example.com"), lines.append) is False
+    assert "no saved email password" in lines[-1]

@@ -85,7 +85,7 @@ def test_test_booking_skips_a_full_day(monkeypatch):
         async def stage(self, slot):
             self.staged = slot
 
-        async def attempt(self, partners):
+        async def attempt(self, partners, force=False):
             return Attempt(engine.CONFIRMED, "guid")
 
         async def reservation_exists(self, slot):

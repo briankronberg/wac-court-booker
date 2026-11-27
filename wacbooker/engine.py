@@ -83,7 +83,7 @@ class Site(Protocol):
     async def stage(self, slot: Slot) -> None: ...
     async def keepalive(self) -> None: ...
     async def is_staged(self) -> bool: ...
-    async def attempt(self, partners: list[str]) -> Attempt: ...
+    async def attempt(self, partners: list[str], force: bool = False) -> Attempt: ...
     async def reservation_exists(self, slot: Slot) -> bool | None: ...
     async def slot_still_open(self, slot: Slot) -> bool | None: ...
     async def release(self) -> None: ...
@@ -95,17 +95,45 @@ class Clock(Protocol):
 
 
 class RealClock:
-    """PC time plus a correction measured against internet time (seconds)."""
+    """Club time on a steady timer. It starts from PC time plus a correction measured
+    against internet time, then runs on the monotonic clock, so Windows adjusting its
+    own clock during the wait can't move the window. `resync()` re-reads the club
+    server's clock (just before the window) and shifts to it."""
 
-    def __init__(self, offset: float = 0.0):
+    def __init__(self, offset: float = 0.0, measure: Callable[[], tuple[float, float]] | None = None):
         self.offset = offset
+        self._base = time.time() + offset
+        self._mono = time.monotonic()
+        self._measure = measure
+        self._lock: asyncio.Lock | None = None
+        self.synced: float | None = None   # club time of the last successful resync
 
     def now(self) -> float:
-        return time.time() + self.offset
+        return self._base + (time.monotonic() - self._mono)
 
     async def sleep(self, seconds: float) -> None:
         if seconds > 0:
             await asyncio.sleep(seconds)
+
+    async def resync(self, log: Callable[[str], None] = lambda m: None) -> None:
+        """Read the club server's clock and move to it. Shared by every login in a run:
+        once is enough (a second call within 2 minutes does nothing)."""
+        if self._measure is None:
+            return
+        self._lock = self._lock or asyncio.Lock()
+        async with self._lock:
+            if self.synced is not None and abs(self.now() - self.synced) < 120:
+                return
+            try:
+                off, unc = await asyncio.to_thread(self._measure)
+            except OSError as e:
+                log(f"club clock check failed ({e}); keeping the earlier correction")
+                self.synced = self.now()
+                return
+            before = self.now()
+            self._base, self._mono = time.time() + off, time.monotonic()
+            self.synced = self.now()
+            log(f"club clock: PC {off:+.2f}s (+-{unc:.2f}s); timing moved {self.now() - before:+.2f}s")
 
 
 @dataclass
@@ -115,6 +143,10 @@ class Timing:
     keepalive: float = 60.0      # reload the staged page this often
     freeze: float = 45.0         # no reloads in the last 45 s before W
     stage_by: float = 90.0       # staging retries stop at W - 90 s
+    resync_by: float = 8.0       # re-read the club clock if there's this long before W
+    late_ok: float = 20 * 60.0   # a run that starts this late still books what's open
+    force_after: float = 75.0    # from W + 75 s, press a switched-off page now and then
+    force_every: float = 15.0
     login_tries: int = 3
 
 
@@ -168,7 +200,8 @@ def day_conflict(rows: list[dict], date: str, start: int, end: int) -> str | Non
 
 class Engine:
     def __init__(self, booking: Booking, occ: clubtime.Occurrence, site: Site, clock: Clock,
-                 timing: Timing | None = None, log: Callable[[str], None] | None = None):
+                 timing: Timing | None = None, log: Callable[[str], None] | None = None,
+                 chooser: Callable | None = None, first_court: int | None = None):
         self.b = booking
         self.occ = occ
         self.site = site
@@ -181,6 +214,9 @@ class Engine:
         self.slot: Slot | None = None
         self.lines: list[str] = []
         self.attempts: list[dict] = []
+        self._forced_at = -1e9
+        self.chooser = chooser        # replaces pick (coordinated logins share a Group)
+        self.first_court = first_court  # this login's court from an earlier part, if it has one
 
     # ------------------------------------------------------------ helpers
     def log(self, msg: str) -> None:
@@ -226,6 +262,14 @@ class Engine:
         open_by_len = await self.site.find_open(self.date, self.b.time, self.b.lengths, self.b.site_play)
         summary = {L: sorted(v) for L, v in open_by_len.items()}
         self.log(f"open courts by length: {summary}")
+        if self.first_court is not None:
+            # the court an earlier part got goes first: back-to-back and Prime Time sit next to it
+            for L in self.b.lengths:
+                s = (open_by_len.get(L) or {}).get(self.first_court)
+                if s is not None and (self.first_court, L) not in self.tried:
+                    return s
+        if self.chooser is not None:
+            return self.chooser(open_by_len, self.b, self.tried)
         return pick(open_by_len, self.b, self.tried)
 
     async def stage_best(self, deadline: float) -> bool:
@@ -325,8 +369,15 @@ class Engine:
     # ------------------------------------------------------------ the run
     async def run(self) -> RunResult:
         give_up = self.W + self.t.give_up
-        if self.clock.now() > give_up:
+        late = self.rel() - self.t.late_ok
+        if late > 0:
             return self.result("not_booked", "Not booked: the run started too late for this window.")
+        if self.clock.now() > self.W - self.t.stage_by:
+            # Started late (the PC was off or asleep): a late court beats no court, so
+            # still book whatever is open, with the usual few minutes to do it.
+            give_up = max(give_up, self.clock.now() + self.t.give_up)
+            if self.rel() > 0:
+                self.log(f"started {self.rel():.0f}s after the window; booking whatever is still open")
         # Wait until the staging lead (the task starts early to absorb DST).
         await self.sleep_until(self.W - clubtime.STAGE_LEAD.total_seconds())
         self.log(f"run for {self.b.name}: {self.b.describe()}")
@@ -349,6 +400,8 @@ class Engine:
                 return self.result("not_booked", self._none_open_msg())
         if self.rel() < -self.t.freeze:
             await self.hold()
+        if self.rel() < -self.t.resync_by and hasattr(self.clock, "resync"):
+            await self.clock.resync(self.log)
         return await self.commit_loop(give_up)
 
     async def day_check(self) -> str | None:
@@ -373,7 +426,8 @@ class Engine:
             return True  # can't tell: keep trying in the commit loop
 
     async def commit_loop(self, give_up: float) -> RunResult:
-        n = self.t.first_tick
+        # Started late: the presses go from now, once a second, not in a burst to catch up.
+        n = max(self.t.first_tick, float(int(self.rel()) + 1))
         while self.clock.now() < give_up:
             await self.sleep_until(self.W + n)
             n += 1
@@ -383,7 +437,12 @@ class Engine:
                         return self.result("not_booked", self._none_open_msg())
                     await self.clock.sleep(2)
                     continue
-            a = await self.site.attempt(self.b.partners)
+            # Long after the usual opening (about W + 44 s) and still no switched-on page:
+            # press anyway now and then, in case the page never shows its rows on.
+            force = self.rel() > self.t.force_after and self.rel() - self._forced_at >= self.t.force_every
+            if force:
+                self._forced_at = self.rel()
+            a = await self.site.attempt(self.b.partners, force=force)
             rec = {"t": round(self.rel(), 1), "outcome": a.outcome, "detail": a.detail[:120],
                    "court": self.slot.court, "length": self.slot.length}
             self.attempts.append(rec)
