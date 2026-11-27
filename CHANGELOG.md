@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- **Reset** on the booking form, next to **Cancel**: clears every field back to the start. When you're changing a saved booking, it puts the fields back to how the booking was saved.
+
 ## 0.5.0
 
 - **Book Now.** A new button next to **Save booking** books straight away when the club is already taking bookings for that time (from a week ahead, or a day ahead in Prime Time). It's greyed out until everything is chosen and the time is open, and the note above the buttons says when it opens. It asks you to confirm first. For a weekly booking it books the soonest such day if that's open, and **Save booking** still books every week after that.

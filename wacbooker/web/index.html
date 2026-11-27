@@ -595,7 +595,7 @@ function renderForm(el) {
   const sec = (title, body, hint = "") => `<section class="form-section"><h3><span class="n">${++n}</span>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ""}${body}</section>`;
   const choice = (key, val, label, sub = "") => `<button type="button" class="choice" data-k="${key}" data-v="${esc(JSON.stringify(val))}" aria-pressed="${JSON.stringify(f[key]) === JSON.stringify(val)}">${label}${sub ? `<small>${sub}</small>` : ""}</button>`;
 
-  let h = `<div class="page-head"><h2>${f.old_name ? "Change booking" : "Book a court"}</h2><button class="btn" id="f-cancel" type="button">Cancel</button></div><div class="card">`;
+  let h = `<div class="page-head"><h2>${f.old_name ? "Change booking" : "Book a court"}</h2><div class="row"><button class="btn" id="f-reset" type="button" title="${f.old_name ? "Put every field back to the saved booking" : "Clear every field back to the start"}">Reset</button><button class="btn" id="f-cancel" type="button">Cancel</button></div></div><div class="card">`;
   if (S.logins.length > 1) h += sec("Whose club login books it?", `<div class="choices">${S.logins.map((l) => choice("login", l.nickname, esc(l.nickname), esc(l.username))).join("")}</div>`);
   h += sec("What are you booking?", `<div class="choices">${choice("play", "singles", "Singles", "You and 1 other")}${choice("play", "doubles", "Doubles", "You and 3 others")}${choice("play", "machine", "Ball machine", "Just you")}</div>`);
   if (f.play === "machine") h += sec("Which ball machine?", `<div class="choices">${choice("machine", "genie", "Genie", "Works with its phone app")}${choice("machine", "regular", "Regular", "The standard machine")}${choice("machine", "either", "Either one", "Genie first")}</div>`,
@@ -656,6 +656,12 @@ function renderForm(el) {
 
   const cancel = () => { form = null; render(); };
   $("#f-cancel").onclick = cancel; $("#f-cancel2").onclick = cancel;
+  $("#f-reset").onclick = () => {
+    // A new booking goes back to the defaults; a change goes back to the saved booking.
+    const saved = f.old_name ? (S.bookings || []).find((x) => x.name === f.old_name) : null;
+    startForm(saved || null);
+    toast(saved ? "Back to the saved booking." : "Every field is back to the start.");
+  };
   el.querySelectorAll(".choice[data-k]").forEach((b) => (b.onclick = () => {
     const k = b.dataset.k, v = JSON.parse(b.dataset.v);
     f[k] = v;
