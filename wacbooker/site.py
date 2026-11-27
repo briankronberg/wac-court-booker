@@ -979,7 +979,8 @@ class ClubSite:
 
     async def cancel_reservation(self, guid: str, expect: dict) -> str:
         """Cancel one reservation by its id, after checking its detail page shows the
-        expected date and time. Returns the club's message, if it shows one."""
+        expected date and time. Returns "" once the club confirms it (kept as a string
+        for a future club message worth showing)."""
         if not re.fullmatch(r"[0-9a-f-]{36}", guid or ""):
             raise SiteError("that reservation id doesn't look right")
         await self.goto(DETAIL_URL.format(guid=guid), timeout=90)
@@ -1002,7 +1003,7 @@ class ClubSite:
         while time.time() < end:
             if "CANCELED" in (await self.url()).upper():
                 self.log(f"cancelled the reservation on {expect['date']} at {clubtime.fmt_time(expect['start'])}")
-                return "" if note == "yes" else str(note)[:200]
+                return ""  # the popup's text is only the club's "are you sure" question
             await asyncio.sleep(1)
         raise SiteError("the club site didn't confirm the cancellation")
 

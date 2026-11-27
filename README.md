@@ -48,7 +48,7 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
 
 The club has two ball machines: the **Genie** (you control it from its phone app, so no walking to the far side of the court) and the **regular** one. They go only on courts 2, 3, 8, 9 and 10. On the club site you find a free machine, pick a time, then pick a court. In the app you choose **Ball machine**, then **Genie**, **Regular** or **Either one** (Genie first), and the time and courts as usual. When the booking opens, the app finds a court that takes a machine at a time the machine is free, and books both together. **See Available Courts** shows when each machine is free, next to the courts, and **Validate booking** checks your machine and courts. Like singles, a ball machine in Prime Time is booked 24 hours ahead.
 
-The club allows 2 reservations per login per day. The app warns when a day would go over that and refuses bookings that overlap on one login.
+The club allows 2 reservations per login per day. The app warns when a day would go over that and refuses bookings that overlap on one login. It also checks what you already have on the club site: **Validate booking** says when that day is full or the time clashes with one of your reservations, and a booking that opens on such a day stops and tells you, instead of trying and getting turned away.
 
 ### Prime Time
 

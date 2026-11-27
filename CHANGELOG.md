@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- **A day you've already filled is caught.** The club allows 2 reservations per login per day and won't take one that overlaps your own. The club site turns such a booking away without saying why, so the app used to keep trying and end with a vague "didn't accept in time". Now a booking checks your reservations for that day first and, if the day is full or the time clashes, stops and says so. **Validate booking** warns about it too, and the menu's test booking skips such days.
+- **Fix: after a cancel,** the app showed "The club site said: Do you want to cancel the service?", which was the club's question, not its answer. It now just says the reservation was cancelled.
+
 ## 0.4.0
 
 - **Ball machines.** A booking can now be a ball machine instead of singles or doubles: the **Genie** (works with its phone app), the **regular** one, or **either** (Genie first). The app books the machine and a court that takes it (2, 3, 8, 9 or 10) together, at the time the booking opens; Prime Time ball machines book 24 hours ahead, like singles. **See Available Courts** shows each machine's free times and **Validate booking** checks the machine too.

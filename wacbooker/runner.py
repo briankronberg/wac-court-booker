@@ -12,7 +12,7 @@ from typing import Callable
 
 from . import clock, clubtime, config, creds, notify, paths, results
 from .config import Booking, Config, Login
-from .engine import CONFIRMED, NOT_READY, UNKNOWN, Engine, RealClock, SiteError, Slot
+from .engine import CONFIRMED, NOT_READY, UNKNOWN, Engine, RealClock, SiteError, Slot, day_conflict
 from . import site as site_mod
 from .site import ClubSite
 
@@ -454,7 +454,15 @@ async def court_check_on(site: ClubSite, day, start: int, lengths: list[int], co
         if not main and out.get(L):
             say(f"For {L} minutes: court{'s' if len(out[L]) > 1 else ''} {_court_list(out[L])}.")
     say("Courts can still be taken (or freed) before the club opens booking for that time.")
-    return {"open": out}
+    why = None
+    try:
+        ds = day.strftime("%m/%d/%Y")
+        why = day_conflict(await site.reservations(ds, ds, False), ds, start, start + max(lengths))
+    except SiteError:
+        pass  # the court answer above still stands
+    if why:
+        say(f"But {why}, so the club would turn this booking away.")
+    return {"open": out, "conflict": why}
 
 
 # ---------------------------------------------------------------- reservations
@@ -542,9 +550,17 @@ async def test_booking(cfg: Config, login: Login, play: str, partners: list[str]
     try:
         await site.login()
         slot = None
+        a, z = (now + timedelta(days=2)).strftime("%m/%d/%Y"), (now + timedelta(days=6)).strftime("%m/%d/%Y")
+        try:  # skip days the club would refuse: at its daily limit, or a clash
+            mine = await site.reservations(a, z, False)
+        except SiteError as e:
+            log(f"couldn't read your reservations ({e}); trying anyway")
+            mine = []
         for days in range(2, 7):
             d = (now + timedelta(days=days)).strftime("%m/%d/%Y")
-            slot = pick_quiet_slot(await site.list_open(d, 30, play), courts, now)
+            ok = [s for s in await site.list_open(d, 30, play)
+                  if not day_conflict(mine, d, s.start, s.end)]
+            slot = pick_quiet_slot(ok, courts, now)
             if slot:
                 break
         if not slot:

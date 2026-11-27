@@ -30,6 +30,9 @@ class FakeApi(S.ClubSite):
         v = self.table[method]
         return v(payload) if callable(v) else v
 
+    async def reservations(self, frm, to, family=False):
+        return [r for r in self.table.get("mine", []) if frm <= r["date"] <= to]
+
 
 def table():
     res = []
