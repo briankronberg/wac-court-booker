@@ -383,29 +383,62 @@ def read_at(now: datetime) -> str:
     return clubtime.fmt_time(now.hour * 60 + now.minute)
 
 
-def calendar_cells(avail: dict, day, now: datetime) -> dict:
+SUFFIXES = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"}
+
+
+def short_name(host: str, known: list[str]) -> str:
+    """The club's 'Kro, B.' as 'B. Kronberg' when exactly one person the app knows (you,
+    your buddies, your family) fits it; otherwise 'B. Kro…'. Never anything longer
+    than the club itself shows, except a known person's last name."""
+    m = re.fullmatch(r"\s*([^,]+?)\s*,\s*([^\W\d_])\.?\s*", host or "")
+    if not m:
+        return (host or "").strip()
+    part, initial = m.group(1), m.group(2).upper()
+    fits = set()
+    for name in known:
+        words = [w for w in name.split() if w.lower() not in SUFFIXES]
+        if len(words) >= 2 and words[0][0].upper() == initial and words[-1].lower().startswith(part.lower()):
+            fits.add(words[-1])
+    if len(fits) == 1:
+        return f"{initial}. {fits.pop()}"
+    return f"{initial}. {part}{'…' if len(part) >= 3 else ''}"
+
+
+def known_names(member: str = "") -> list[str]:
+    """Everyone the app knows by full name: buddies and family of every login, and you."""
+    out = [member] if member else []
+    for entry in load_buddies().values():
+        out += list(entry.get("names") or []) + list(entry.get("family") or [])
+    return out
+
+
+def calendar_cells(avail: dict, day, now: datetime, known: list[str] | None = None) -> dict:
     """The calendar window's data: for each court and half hour, 'open', 'booked'
     (a member's reservation), 'closed' (a lesson, a block or the club's hours) or
     'past'; and the half hours each ball machine is free."""
     starts = list(range(site_mod.FIRST_START, site_mod.LAST_END, 30))
     today_cut = now.hour * 60 + now.minute if day == now.date() else -1
-    cells = {}
+    cells, who = {}, {}
     for c in config.COURTS:
         free = avail["courts"].get(c, [False] * site_mod.DAY_MINUTES)
         booked = avail["booked"].get(c, [])
-        row = {}
+        row, names = {}, {}
         for m in starts:
             if m + 30 <= today_cut:
                 row[m] = "past"
             elif site_mod.free_for(past_cut(free, day, now), m, 30):
                 row[m] = "open"
-            elif any(a < m + 30 and m < b for a, b in booked):
+            elif hit := [x for x in booked if x[0] < m + 30 and m < x[1]]:
                 row[m] = "booked"
+                host = hit[0][2] if len(hit[0]) > 2 else ""
+                if host:
+                    names[m] = short_name(host, known or [])
             else:
                 row[m] = "closed"
         cells[str(c)] = row
+        who[str(c)] = names
     machines = {k: site_mod.open_starts(past_cut(v, day, now)) for k, v in avail.get("machines", {}).items()}
-    return {"date": day.isoformat(), "courts": list(config.COURTS), "starts": starts, "cells": cells,
+    return {"date": day.isoformat(), "courts": list(config.COURTS), "starts": starts, "cells": cells, "who": who,
             "machines": machines, "machine_courts": list(site_mod.MACHINE_COURTS),
             "machine_labels": {k: m["label"] for k, m in site_mod.MACHINES.items()}, "read_at": read_at(now)}
 
@@ -512,7 +545,7 @@ async def calendar_on(site: ClubSite, day, say: Say) -> dict:
     """Every court's half hours on `day`, and the ball machines', for the calendar window."""
     say("Reading the court sheet…")
     avail = await site.day_availability(day.strftime("%m/%d/%Y"), machines=True)
-    return calendar_cells(avail, day, clubtime.now_central())
+    return calendar_cells(avail, day, clubtime.now_central(), known_names(getattr(site, "member_name", "")))
 
 
 def pick_quiet_slot(slots: list[Slot], courts: list, now: datetime) -> Slot | None:

@@ -66,7 +66,7 @@ def test_day_availability_combines_court_service_and_club_hours():
     av = asyncio.run(site.day_availability("12/04/2026", machines=True))
     assert set(av["courts"]) == {2, 3, 4, 5, 6, 8, 9, 10}
     assert S.free_for(av["courts"][8], 1290, 30) and not S.free_for(av["courts"][8], 1320, 30)  # club closes at 10
-    assert not S.free_for(av["courts"][3], 480, 30) and av["booked"][3] == [(480, 540)]
+    assert not S.free_for(av["courts"][3], 480, 30) and av["booked"][3] == [(480, 540, "Not Shown")]
     # The Genie is free outside its own bookings, in either its regular or Prime Time service.
     assert S.free_for(av["machines"]["genie"], 540, 60) and not S.free_for(av["machines"]["genie"], 420, 30)
     sent = [p for m, p in site.calls if m == "GetSchedulerResourceAvailability"][0]
@@ -160,3 +160,31 @@ def test_calendar_page_is_served(srv):
 
 
 REAL_JOB_WORK = web.WebApp._job_work
+
+
+def test_short_name():
+    known = ["Pat Leeds", "Sam Ortiz Jr.", "Kim Ortman", "Pat Lee"]
+    assert runner.short_name("Ort, S.", known) == "S. Ortiz"          # one fit; the suffix ignored
+    assert runner.short_name("Ort, K.", known) == "K. Ortman"
+    assert runner.short_name("Lee, P.", known) == "P. Lee…"           # two people fit: don't guess
+    assert runner.short_name("Kro, B.", []) == "B. Kro…"
+    assert runner.short_name("Ng, A.", []) == "A. Ng"                 # under 3 letters: the whole name
+    assert runner.short_name("Not Shown", known) == "Not Shown"
+
+
+def test_calendar_names_booked_cells():
+    t = table()
+    for r in t["GetSchedulerResourceAvailability"]:
+        for b in r["BookingDetails"]:
+            b["HostName"] = "Ort, S."
+    site = FakeApi(t)
+    site.member_name = "Sam Ortiz"
+    import wacbooker.runner as R
+    real = R.load_buddies
+    R.load_buddies = lambda: {}
+    try:
+        out = asyncio.run(R.calendar_on(site, DAY, lambda m: None))
+    finally:
+        R.load_buddies = real
+    assert out["cells"]["3"][480] == "booked" and out["who"]["3"][480] == "S. Ortiz"
+    assert out["who"]["3"].get(600) is None and out["who"]["4"] == {}
