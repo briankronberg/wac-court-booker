@@ -349,7 +349,8 @@ async def run_group(cfg: Config, b: Booking, occ: clubtime.Occurrence, clock, lo
                 res = await eng.run()
             except Exception as e:  # noqa: BLE001 -- a crash must still settle the guard (kept)
                 log(f"{member.login}: unexpected error: {type(e).__name__}: {e}")
-                res = RunResult("unsure", f"{member.login}: {e}")
+                res = RunResult("unsure", f"Not sure: the booking stopped with an unexpected error "
+                                          f"({type(e).__name__}). Check your reservations on the club site.")
             await settle_guard(site, (guards or {}).get(member.login), res, b.name, occ.day,
                                member.login, log)
         finally:
