@@ -35,7 +35,8 @@ class FakeSite:
     def __init__(self, clock: FakeClock, W: float, *, gate_s: float = 44.0,
                  open_courts: dict[int, list[int]] | None = None, taken_at=None,
                  answer_s: float = 2.0, unknown_on=(), report=None, grid_after_unknown=None,
-                 stage_glitches: int = 0, login_fails: int = 0, bad_password: bool = False):
+                 stage_glitches: int = 0, login_fails: int = 0, bad_password: bool = False,
+                 mine=None):
         self.clock = clock
         self.W = W
         self.gate_s = gate_s
@@ -48,6 +49,7 @@ class FakeSite:
         self.stage_glitches = stage_glitches
         self.login_fails = login_fails
         self.bad_password = bad_password
+        self.mine = mine  # the login's reservations (report rows); None = report unreadable
         self.staged: Slot | None = None
         self.presses = 0
         self.press_times: list[float] = []
@@ -123,6 +125,13 @@ class FakeSite:
         self.pending_unknown = False
         await self.clock.sleep(5)
         return self.report
+
+    async def reservations(self, frm, to, family=False):
+        self.calls.append("my-reservations")
+        await self.clock.sleep(2)
+        if self.mine is None:
+            raise SiteError("the reservation report stayed empty")
+        return [r for r in self.mine if frm <= r["date"] <= to]
 
     async def release(self) -> None:
         self.calls.append("release")

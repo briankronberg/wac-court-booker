@@ -148,6 +148,24 @@ def pick(open_by_len: dict[int, dict[int, Slot]], booking: Booking,
     return None
 
 
+DAY_LIMIT = 2  # the club's reservations per account per day
+
+
+def day_conflict(rows: list[dict], date: str, start: int, end: int) -> str | None:
+    """Why the club would turn this booking away, from the login's own reservations
+    (Reservation Report rows): one already overlapping the time, or the daily limit."""
+    rows = [r for r in rows if r.get("date") == date]
+    d = datetime.strptime(date, "%m/%d/%Y")
+    day = f"{d:%a} {d.month}/{d.day}"
+    for r in rows:
+        if r["start"] < end and start < r["end"]:
+            return (f"you already have a reservation from {clubtime.fmt_time(r['start'])} to "
+                    f"{clubtime.fmt_time(r['end'])} on {day}")
+    if len(rows) >= DAY_LIMIT:
+        return f"you already have {len(rows)} reservations on {day}, the club's limit for one day"
+    return None
+
+
 class Engine:
     def __init__(self, booking: Booking, occ: clubtime.Occurrence, site: Site, clock: Clock,
                  timing: Timing | None = None, log: Callable[[str], None] | None = None):
@@ -317,6 +335,9 @@ class Engine:
             await self.login(stage_deadline)
         except SiteError as e:
             return self.result("not_booked", f"Not booked: couldn't sign in ({e}). Book on the club site.")
+        why = await self.day_check()
+        if why:
+            return self.result("not_booked", f"Not booked: {why}. Cancel one on the club site or in the app first.")
         try:
             staged = await self.stage_best(stage_deadline if self.rel() < 0 else give_up)
         except SiteError as e:
@@ -329,6 +350,21 @@ class Engine:
         if self.rel() < -self.t.freeze:
             await self.hold()
         return await self.commit_loop(give_up)
+
+    async def day_check(self) -> str | None:
+        """Read the login's reservations for the day; a reason the club would refuse, or
+        None. If the report can't be read, carry on: the club will say no if it must."""
+        read = getattr(self.site, "reservations", None)
+        if read is None:
+            return None
+        try:
+            rows = await read(self.date, self.date, False)
+        except SiteError as e:
+            self.log(f"couldn't read your reservations for the day ({e}); going ahead")
+            return None
+        why = day_conflict(rows, self.date, self.b.time, self.b.time + max(self.b.lengths))
+        self.log(f"your reservations that day: {len(rows)}" + (f"; stopping: {why}" if why else ""))
+        return why
 
     async def _any_open(self) -> bool:
         try:
