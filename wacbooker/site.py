@@ -679,7 +679,8 @@ class ClubSite:
         court free AND the service offered then AND the club open. With `machines`, also
         each ball machine's free minutes (its own service, any Prime Time variant, and
         the club's hours). Booked times come back too, each with the club's short form of
-        the host's name ("Lee, P.": up to 3 letters of the last name and the first initial)."""
+        the host's name ("Lee, P.": up to 3 letters of the last name and the first initial)
+        and the host's club id."""
         svc = svc or SERVICES["doubles"][0][1]
         site_day = minutes(await self.api("GetSiteAvailability", {"siteId": SITE_ID, "selectedDate": date}))
         svc_day = minutes(await self.api("GetServiceAvailability", {"serviceUniqueId": svc, "selectedDate": date}))
@@ -691,7 +692,8 @@ class ClubSite:
             if c is None:
                 continue
             courts[c] = both(minutes(x.get("Availability")), svc_day, site_day)
-            booked[c] = [(int(b.get("FromMinutes", 0)), int(b.get("ToMinutes", 0)), str(b.get("HostName") or "").strip())
+            booked[c] = [(int(b.get("FromMinutes", 0)), int(b.get("ToMinutes", 0)), str(b.get("HostName") or "").strip(),
+                          int(b.get("HostId") or 0))
                          for b in x.get("BookingDetails") or []]
         out = {"courts": courts, "booked": booked, "machines": {}}
         if machines:

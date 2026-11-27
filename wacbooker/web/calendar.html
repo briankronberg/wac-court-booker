@@ -57,7 +57,8 @@ tr.prime th.time small { display: block; font-weight: 500; font-size: .7rem; }
 td { padding: 3px; }
 td.sep { border-left: 2px solid var(--line); }
 .cell { border-radius: 7px; padding: 6px 3px; font-size: .82rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-button.cell { width: 100%; cursor: pointer; }
+button.cell { width: 100%; cursor: pointer; font-family: inherit; }
+button.cell.booked:hover { filter: brightness(.93); }
 .cell.open { background: var(--open); color: var(--open-ink); border-color: var(--open-line); }
 button.cell.open:hover { filter: brightness(.95); }
 .cell.booked { background: var(--taken); color: var(--taken-ink); font-weight: 500; }
@@ -89,7 +90,7 @@ tr.mine td .cell { box-shadow: inset 0 0 0 2px var(--mine); }
 "use strict";
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-let TOKEN = "", day = "", mineStart = null, mineLen = 0, login = "", PRIME = [], busy = false, again = false, last = null;
+let SHOWN = null, TOKEN = "", day = "", mineStart = null, mineLen = 0, login = "", PRIME = [], busy = false, again = false, last = null;
 
 function isoOf(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function dateOf(iso) { return new Date(iso + "T12:00:00"); }
@@ -134,6 +135,7 @@ function setTitle() {
 
 const WORD = { open: "Open", booked: "Booked", closed: "Blocked", past: "Past" };
 function draw(data) {
+  SHOWN = data;
   const courts = data.courts, mc = new Set(data.machine_courts || []), machines = Object.keys(data.machines || {});
   const anyOpen = courts.some((c) => Object.values(data.cells[String(c)]).includes("open"));
   let rows = "";
@@ -143,10 +145,11 @@ function draw(data) {
     const cells = courts.map((c) => {
       const st = data.cells[String(c)][String(m)];
       const who = st === "booked" ? ((data.who || {})[String(c)] || {})[String(m)] : "";
+      const host = st === "booked" ? ((data.hosts || {})[String(c)] || {})[String(m)] : null;
       const tip = `Court ${c} at ${fmtTime(m)}: ${who ? `booked by ${who}` : WORD[st].toLowerCase()}`;
-      return st === "open"
-        ? `<td><button type="button" class="cell open" data-c="${c}" data-m="${m}" title="${tip}. Press to use this time.">Open</button></td>`
-        : `<td><div class="cell ${st}" title="${esc(tip)}">${who ? esc(who) : WORD[st]}</div></td>`;
+      if (st === "open") return `<td><button type="button" class="cell open" data-c="${c}" data-m="${m}" title="${tip}. Press to use this time.">Open</button></td>`;
+      if (host) return `<td><button type="button" class="cell booked" data-c="${c}" data-m="${m}" title="${esc(tip)}. Press to say who this is.">${esc(who || WORD[st])}</button></td>`;
+      return `<td><div class="cell ${st}" title="${esc(tip)}">${who ? esc(who) : WORD[st]}</div></td>`;
     }).join("");
     const mcells = machines.map((k, i) => (data.machines[k] || []).includes(m)
       ? `<td class="${i ? "" : "sep"}"><div class="cell free" title="${esc(data.machine_labels[k])} free at ${fmtTime(m)}">Free</div></td>`
@@ -158,6 +161,7 @@ function draw(data) {
   $("#body").innerHTML = (anyOpen ? "" : `<div class="card" style="margin-bottom:12px"><p style="margin:0">No court is open on this day right now.</p></div>`)
     + `<div class="wrap"><table><thead><tr><th class="time" scope="col">Time</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
   document.querySelectorAll("button.cell.open").forEach((b) => (b.onclick = () => pick(+b.dataset.c, +b.dataset.m)));
+  document.querySelectorAll("button.cell.booked").forEach((b) => (b.onclick = () => namePlayer(b.dataset.c, b.dataset.m)));
   const mineRow = document.querySelector("tr.mine");
   if (mineRow) mineRow.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
 }
@@ -172,6 +176,23 @@ function pick(court, m) {
     }
   } catch (e) { /* the main window is gone */ }
   toast(ok ? `Sent ${fmtTime(m)} on court ${court} to your booking form.` : "Open the booking form in WAC Court Booker first.");
+}
+
+// The club shows a booker only as "Smi, A.". You know who that is: say it once and the
+// app shows their name on all their bookings from then on (kept on this PC only).
+async function namePlayer(c, m) {
+  const [id, club] = SHOWN.hosts[c][m];
+  const name = window.prompt(`The club shows this booker as "${club}". Who is it? Type their first and last name.
+(Leave it empty to forget a name you gave.)`, "");
+  if (name === null) return;
+  try {
+    const r = await api("/api/player", { id, club, name });
+    if (!r.ok) throw new Error((r.errors || []).join(" "));
+    for (const cc of Object.keys(SHOWN.hosts)) for (const mm of Object.keys(SHOWN.hosts[cc]))
+      if (SHOWN.hosts[cc][mm][0] === id) SHOWN.who[cc][mm] = r.shown;
+    const y = window.scrollY; draw(SHOWN); window.scrollTo(0, y);
+    toast(name.trim() ? `Saved: ${r.shown}.` : "Forgotten.");
+  } catch (e) { toast(e.message); }
 }
 
 async function load() {
@@ -194,7 +215,7 @@ async function load() {
     }
     if (!j.ok || !j.data) throw new Error(j.lines.join(" ") || "Couldn't read the court sheet.");
     if (j.data.date !== day) return;
-    $("#status").textContent = `Read from the club site at ${j.data.read_at}. Press an open court to use that time in your booking.`;
+    $("#status").textContent = `Read from the club site at ${j.data.read_at}. Press an open court to use that time in your booking, or a booked one to say who it is.`;
     last = day;
     draw(j.data);
   } catch (e) {

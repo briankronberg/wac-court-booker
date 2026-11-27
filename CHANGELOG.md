@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3
+
+- **Name the people booking courts.** In **See Available Courts**, press a booked court and type who it is. From then on the calendar shows that person's first initial and full last name on every booking of theirs, on any day. Names are kept on this PC only, and must fit the club's short form (for "Smi, A.", a first name starting with A and a last name starting with Smi), which catches typos. Leave the name empty to forget it.
+
 ## 0.4.2
 
 - **See Available Courts shows who booked each court.** Instead of "Booked", a booked half hour shows the booker as a first initial and last name. The club gives only the first few letters of the last name, so you, your buddies and your family show in full and anyone else shows as the club gives it, such as "A. Smi…". Point at a cell for its full text.

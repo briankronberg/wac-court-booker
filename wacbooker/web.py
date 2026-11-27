@@ -675,6 +675,18 @@ class WebApp:
             pass
         return {"ok": True}
 
+    def name_player(self, body: dict) -> dict:
+        """The calendar: remember who a booker is (by the club's id for them), on this PC."""
+        try:
+            hid = int(body.get("id"))
+        except (TypeError, ValueError):
+            raise UserError("Pick a booked court first.")
+        try:
+            shown = runner.save_player(hid, str(body.get("club") or ""), str(body.get("name") or ""))
+        except ValueError as e:
+            raise UserError(str(e))
+        return {"ok": True, "shown": shown}
+
     def open_log(self) -> dict:
         p = paths.log_file()
         if not p.exists():
@@ -792,6 +804,7 @@ def make_handler(app: WebApp, token: str, port_ref: list[int]):
                 "/api/wake-timers": app.wake_timers,
                 "/api/job": lambda: app.start_job(body),
                 "/api/job/answer": lambda: app.job_answer(body),
+                "/api/player": lambda: app.name_player(body),
                 "/api/open-log": app.open_log,
                 "/api/desktop-shortcut": app.desktop_shortcut,
                 "/api/heartbeat": lambda: {"ok": True, "busy": app.busy()},
