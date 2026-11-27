@@ -105,10 +105,15 @@ The club's FAQ: Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:
 
 ## Court availability (one-off dates)
 
-- **Are courts open?** runs `find_open` for the form's date, start and lengths and reports the courts per length. **Calendar view** opens `/calendar` in its own window and runs `day_open`: the list shows 15 rows a page, so it steps through the day with the time-of-day search from the latest start seen, collecting every open 30-minute slot (about 30 seconds for a day).
-- Both read the **doubles** list: it covers every hour, while singles in Prime Time only lists courts 24 hours ahead. A court free for doubles is free.
-- The list shows open slots for dates beyond the booking window too, so a one-off date more than a week away can be checked.
-- Both are background jobs like the other club-site checks (one at a time). The calendar window follows its own job, so the main window doesn't also show it.
+- The club's court sheet is drawn in the browser from its JSON web service, `Library/OlsService.asmx` (POST, JSON body, the signed-in session's cookies). `ClubSite.api()` calls it with `fetch` from the signed-in page. The calls the app uses (all read-only):
+  - `GetSchedulerResourceAvailability {siteId, resourceIds, selectedDate}`: per court, 1440 `{TimeId, IsAvailable}` minutes plus `BookingDetails` (member reservations; their names are never kept).
+  - `GetServiceAvailability {serviceUniqueId, selectedDate}`: when a service is offered (doubles all day; singles and ball machines split at Prime Time into separate services).
+  - `GetSiteAvailability {siteId, selectedDate}`: the club's hours.
+  - `GetSchedulerProviderAvailability {siteId, providerIds, selectedDate}`: ball machines, which are "providers" (regular 121, Genie 442).
+- A minute is free when the court, the service and the club all say so (the page ANDs them the same way; today it also blocks times already past). A half hour is **booked** if a member reservation overlaps it, otherwise **blocked** (lesson, league, event or closed).
+- **Validate booking** (next to Save) checks the form's date (a weekly booking: its next date more than a week away), start and lengths; **See Available Courts** opens `/calendar` for the form's date or today. Pressing an open cell there posts `{type: "wacb-pick", date, time, court}` to the main window, which fills the form. A second open of the calendar only changes its hash, so the page reloads on `hashchange`.
+- Both use a warm session (`live.py`): one signed-in browser on its own event-loop thread, kept 10 minutes after its last use, closed when the page server stops. The first look takes a few seconds (sign-in), later ones about one. Scheduled bookings never use it.
+- The booking engine still stages through the court list (it needs the page's slot links), with every court selected first: the list opens with only courts 2-6 selected.
 
 ## How a booking runs
 
