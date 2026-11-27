@@ -22,8 +22,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("setup", help="first-run setup wizard")
     r = sub.add_parser("run", help="run one booking now (what the scheduled task does)")
     r.add_argument("--booking", required=True)
-    r.add_argument("--part", choices=("main", "prime"), default="main",
-                   help="prime: the Prime Time part of a split singles booking")
+    r.add_argument("--part", choices=("main", "prime", "next", "blocker"), default="main",
+                   help="prime: the Prime Time part of a split singles booking; next: the second "
+                        "session right after; blocker: the guard slot before the start")
     sub.add_parser("check", help="check bookings.yaml and list next run times")
     t = sub.add_parser("test-login", help="sign in with a login (read-only)")
     t.add_argument("--login")

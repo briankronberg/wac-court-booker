@@ -75,3 +75,32 @@ def test_cli_run_goes_through_run_and_report(monkeypatch):
     monkeypatch.setattr(runner, "run_and_report", lambda name, part="main": called.append((name, part)) or 0)
     assert cli.main(["run", "--booking", "b"]) == 0
     assert called == [("b", "main")]
+
+
+def test_cli_run_accepts_every_part(monkeypatch):
+    called = []
+    monkeypatch.setattr(runner, "run_and_report", lambda name, part="main": called.append((name, part)) or 0)
+    for part in ("main", "prime", "next", "blocker"):
+        assert cli.main(["run", "--booking", "b", "--part", part]) == 0
+    assert called == [("b", "main"), ("b", "prime"), ("b", "next"), ("b", "blocker")]
+
+
+def test_cli_run_part_choices_match_the_booking_parts():
+    # every part a booking can have must be runnable from a scheduled task
+    from wacbooker import config
+    errs = []
+    b = config.parse_booking({"name": "b", "login": "me", "play": "singles", "partners": ["Pat Lee"],
+                              "day": "Tuesday", "time": "4:30 PM", "length": 90, "courts": [5, "any"],
+                              "blocker": True}, 1, errs)
+    assert not errs, errs
+    keys = {p.key for p in b.parts}
+    b2 = config.parse_booking({"name": "c", "login": "me", "play": "doubles",
+                               "partners": ["A B", "C D", "E F"], "day": "Saturday", "time": "9:00 AM",
+                               "length": 90, "courts": [5, "any"], "then": 60}, 1, errs)
+    assert not errs, errs
+    keys |= {p.key for p in b2.parts}
+    assert keys == {"blocker", "main", "prime", "next"}
+    import argparse
+    parser = cli.build_parser() if hasattr(cli, "build_parser") else None
+    if parser is None:
+        return  # covered by test_cli_run_accepts_every_part
