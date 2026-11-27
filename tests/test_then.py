@@ -106,8 +106,9 @@ def test_next_part_runs_on_the_main_court(tmp_path, monkeypatch):
     ran, toasts = [], []
 
     async def fake_run(cfg_, pb, occ, login, log, first_courts=None):
-        court = 4 if pb.time == 900 else pb.courts[0]  # the first part takes court 4
-        ran.append((pb.time, list(pb.courts), occ.day, court))
+        fc = first_courts() if callable(first_courts) else (first_courts or {})
+        court = 4 if pb.time == 900 else fc.get("me", pb.courts[0])  # the first part takes court 4
+        ran.append((pb.time, list(pb.courts), occ.day, court, fc))
         return RunResult("booked", "Booked: Ct " + str(court),
                          slot=Slot(occ.day.strftime("%m/%d/%Y"), pb.time, pb.length, court))
     monkeypatch.setattr(runner, "_run_async", fake_run)
@@ -118,12 +119,12 @@ def test_next_part_runs_on_the_main_court(tmp_path, monkeypatch):
 
     monkeypatch.setattr(clubtime, "now_central", lambda: main_w - timedelta(minutes=75))
     assert runner.run_booking("b") == 0
-    assert ran[-1] == (900, [5, 4, "any"], day, 4)
+    assert ran[-1] == (900, [5, 4, "any"], day, 4, {})
 
     # The second session: the first part's court goes first.
     monkeypatch.setattr(clubtime, "now_central", lambda: next_w - timedelta(minutes=75))
     assert runner.run_booking("b", "next") == 0
-    assert ran[-1] == (990, [4, 5, "any"], day, 4)
+    assert ran[-1] == (990, [5, 4, "any"], day, 4, {"me": 4})
     assert toasts[-1][0] == "Booked (second session)"
 
 
@@ -139,7 +140,8 @@ def test_next_books_even_when_the_main_part_didnt(tmp_path, monkeypatch):
     ran = []
 
     async def fake_run(cfg_, pb, occ, login, log, first_courts=None):
-        ran.append((pb.time, list(pb.courts)))
+        fc = first_courts() if callable(first_courts) else (first_courts or {})
+        ran.append((pb.time, list(pb.courts), fc))
         if pb.time == 990:
             return RunResult("booked", "Booked: Ct 5",
                              slot=Slot(occ.day.strftime("%m/%d/%Y"), pb.time, pb.length, 5))
@@ -153,7 +155,7 @@ def test_next_books_even_when_the_main_part_didnt(tmp_path, monkeypatch):
     assert runner.run_booking("b") == 1  # the first part lost its court
     monkeypatch.setattr(clubtime, "now_central", lambda: next_w - timedelta(minutes=75))
     assert runner.run_booking("b", "next") == 0  # the second session plays on its own
-    assert ran[-1] == (990, [5, 4, "any"])  # no anchor: courts as configured
+    assert ran[-1] == (990, [5, 4, "any"], {})  # no anchor: courts as configured
 
 
 def test_group_next_uses_each_members_main_court(tmp_path, monkeypatch):
@@ -177,7 +179,8 @@ def test_group_next_uses_each_members_main_court(tmp_path, monkeypatch):
 
     async def fake_run(cfg_, pb, occ, login, log, first_courts=None):
         # a coordinated run: one result per member, its own court
-        got.append((pb.time, first_courts))
+        fc = first_courts() if callable(first_courts) else (first_courts or {})
+        got.append((pb.time, fc))
         return {m.login: RunResult("booked", "Booked",
                                    slot=Slot(occ.day.strftime("%m/%d/%Y"), pb.time, pb.length,
                                              4 if m.login == "me" else 3))
@@ -186,7 +189,7 @@ def test_group_next_uses_each_members_main_court(tmp_path, monkeypatch):
 
     monkeypatch.setattr(clubtime, "now_central", lambda: main_w - timedelta(minutes=75))
     assert runner.run_booking("b") == 0
-    assert got[-1] == (900, None)
+    assert got[-1] == (900, {})
 
     monkeypatch.setattr(clubtime, "now_central", lambda: next_w - timedelta(minutes=75))
     assert runner.run_booking("b", "next") == 0
@@ -402,3 +405,59 @@ def test_book_now_job_sends_then(srv, monkeypatch):
     assert r.get("job"), r
     j = wait_job(srv, r["job"]["id"])
     assert j["ok"] and ran == [30]
+
+
+# ------------------------------------------------- own lock per part
+
+
+def test_next_runs_while_the_main_run_holds_its_lock(tmp_path, monkeypatch):
+    from wacbooker import creds
+    from wacbooker.engine import RunResult, Slot
+    monkeypatch.setenv("WACB_HOME", str(tmp_path))
+    b = booking(then=30)
+    cfg = config.Config(logins=[config.Login("me", "x")], bookings=[b])
+    monkeypatch.setattr(config, "load", lambda *a: (None, cfg))
+    monkeypatch.setattr(creds, "has_password", lambda u: True)
+    monkeypatch.setattr(runner.notify, "toast", lambda t, m: None)
+    ran = []
+
+    async def fake_run(cfg_, pb, occ, login, log, first_courts=None):
+        ran.append(pb.time)
+        return RunResult("booked", "Booked: Ct 5", slot=Slot(occ.day.strftime("%m/%d/%Y"), pb.time, pb.length, 5))
+    monkeypatch.setattr(runner, "_run_async", fake_run)
+    day = date(2026, 12, 18)
+    next_w = clubtime.window_open(clubtime.slot_start(day, 16 * 60 + 30))
+    monkeypatch.setattr(clubtime, "now_central", lambda: next_w - timedelta(minutes=75))
+
+    # the main run still holds its lock while the second session starts
+    with runner.run_lock("b"):
+        assert runner.run_booking("b", "next") == 0
+    assert ran == [990]
+
+
+def test_a_run_that_cannot_start_says_so(tmp_path, monkeypatch):
+    from wacbooker import creds
+    from wacbooker.engine import RunResult, Slot
+    monkeypatch.setenv("WACB_HOME", str(tmp_path))
+    b = booking(then=30)
+    cfg = config.Config(logins=[config.Login("me", "x")], bookings=[b])
+    monkeypatch.setattr(config, "load", lambda *a: (None, cfg))
+    monkeypatch.setattr(creds, "has_password", lambda u: True)
+    toasts, ran = [], []
+    monkeypatch.setattr(runner.notify, "toast", lambda t, m: toasts.append((t, m)))
+
+    async def fake_run(cfg_, pb, occ, login, log, first_courts=None):
+        ran.append(pb.time)
+        return RunResult("booked", "Booked: Ct 5", slot=Slot(occ.day.strftime("%m/%d/%Y"), pb.time, pb.length, 5))
+    monkeypatch.setattr(runner, "_run_async", fake_run)
+    day = date(2026, 12, 18)
+    next_w = clubtime.window_open(clubtime.slot_start(day, 16 * 60 + 30))
+    monkeypatch.setattr(clubtime, "now_central", lambda: next_w - timedelta(minutes=75))
+
+    # another run of the second session is already going
+    with runner.run_lock("b (second session)"):
+        assert runner.run_booking("b", "next") == 1
+    assert ran == []
+    assert toasts[-1][0] == "Not booked" and "already" in toasts[-1][1], toasts
+    last = runner.results.recent(5)[-1]
+    assert last["part"] == "next" and last["status"] == "not_booked", last

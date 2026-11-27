@@ -173,13 +173,19 @@ def run_booking(name: str, part: str = "main") -> int:
         return 0
     pb = b.for_part(part)
     first_courts = None
-    if part in ("prime", "next"):
-        # Only makes sense next to the first part: same court if it can. A second session
-        # (unlike Prime Time) still books on its own when the first part wasn't booked.
+    if part == "next":
+        # The first part runs before this one, so its court isn't known yet: _run_async
+        # calls this once it has waited. A second session still books when the first part
+        # wasn't booked, so members without one are left out.
+        def first_courts():
+            got = {m.login: main_part_court(name, occ.day, m.login, b.login) for m in b.members}
+            return {l: c for l, c in got.items() if c is not None}
+    if part == "prime":
+        # Only makes sense next to the first part: same court if it can.
         if b.also:
             # coordinated logins: each login's own court from the first part goes first for it
             first_courts = {m.login: main_part_court(name, occ.day, m.login, b.login) for m in b.members}
-            if part == "prime" and all(c is None for c in first_courts.values()):
+            if all(c is None for c in first_courts.values()):
                 msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
                        f"{occ.day:%a %m/%d}): the first part wasn't booked.")
                 log(msg)
@@ -191,18 +197,15 @@ def run_booking(name: str, part: str = "main") -> int:
         else:
             got = main_part_court(name, occ.day, b.login, b.login)
             if got is None:
-                if part == "prime":
-                    msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
-                           f"{occ.day:%a %m/%d}): the first part wasn't booked.")
-                    log(msg)
-                    results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
-                    return 0
-            else:
-                pb.courts = [got] + [c for c in b.courts if c != got]
-                if "any" not in pb.courts:
-                    pb.courts.append("any")
-                which = "second session" if part == "next" else "Prime Time part"
-                log(f"{which}; the first part got court {got}, so it goes first")
+                msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
+                       f"{occ.day:%a %m/%d}): the first part wasn't booked.")
+                log(msg)
+                results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
+                return 0
+            pb.courts = [got] + [c for c in b.courts if c != got]
+            if "any" not in pb.courts:
+                pb.courts.append("any")
+            log(f"Prime Time part; the first part got court {got}, so it goes first")
     login = cfg.login(b.login)
     missing = [m.login for m in b.members if not creds.has_password(cfg.login(m.login).username)]
     if missing:
@@ -223,7 +226,10 @@ def run_booking(name: str, part: str = "main") -> int:
                 finally:
                     keep_awake(False)
         except RuntimeError as e:
-            log(f"not started: {e}")
+            msg = f"Not booked: {e}."
+            log(msg)
+            results.record("run", name, "not_booked", msg, part=part, day=occ.day.isoformat())
+            notify.toast("Not booked", msg)
             return 1
         return _finish_guard(b, occ, out, log)
     guards = None
@@ -232,7 +238,7 @@ def run_booking(name: str, part: str = "main") -> int:
         def guards():
             return {m.login: guard_slot(name, occ.day, m.login, b.login) for m in b.members}
     try:
-        with run_lock(name):
+        with run_lock(name + label):  # each part has its own lock: the main run holds `name`
             keep_awake(True)
             try:
                 extra = (guards,) if guards else ()  # only a main part with a guard passes it on
@@ -240,7 +246,10 @@ def run_booking(name: str, part: str = "main") -> int:
             finally:
                 keep_awake(False)
     except RuntimeError as e:
-        log(f"not started: {e}")
+        msg = f"Not booked: {e}."
+        log(msg)
+        results.record("run", name, "not_booked", msg, part=part, day=occ.day.isoformat())
+        notify.toast("Not booked", msg)
         return 1
     if b.also:
         # one result per member, one toast for the group
@@ -275,6 +284,8 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
     if wait > 0:
         log(f"waiting {wait / 60:.0f} min until 15 minutes before the window")
         await asyncio.sleep(wait)
+    if callable(first_courts):  # a second session: the first part's court, looked up now it has run
+        first_courts = first_courts() or None
     found = {k: v for k, v in (guards() if guards else {}).items() if v is not None}
     if found:
         log("guard slots, cancelled once the booking is settled: "
@@ -290,8 +301,10 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
         return RunResult("not_booked", f"Not booked: {e}. Book on the club site.")
     try:
         guard = found.get(login.nickname)
-        res = await Engine(b, occ, site, rc, log=log,
-                           first_court=guard.court if guard else None).run()
+        first = guard.court if guard else (first_courts or {}).get(login.nickname)
+        if first is not None and not guard:
+            log(f"second session; the first part got court {first}, so it goes first")
+        res = await Engine(b, occ, site, rc, log=log, first_court=first).run()
         await settle_guard(site, guard, res, b.name, occ.day, login.nickname, log)
         if res.status == "not_booked":
             await site.release()
