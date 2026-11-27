@@ -571,7 +571,7 @@ class WebApp:
                 raise UserError("That reservation isn't there any more. Refresh the list.")
             if not body.get("confirmed"):
                 raise UserError("Confirm the cancellation first.")
-            return self._live_work(job, cfg, login, lambda site: runner.cancel_on(site, r, say))
+            return self._live_work(job, cfg, login, lambda site: runner.cancel_on(site, r, say), retry=False)
         if kind in ("court-check", "calendar"):
             try:
                 day = date.fromisoformat(str(body.get("date")))
@@ -592,11 +592,11 @@ class WebApp:
                 site, day, start, lengths, courts, say, machine))
         raise UserError("Unknown check.")
 
-    def _live_work(self, job: Job, cfg: config.Config, login: Login, fn) -> Callable:
-        """A read-only look through the warm club session; its result goes to job.data."""
+    def _live_work(self, job: Job, cfg: config.Config, login: Login, fn, retry: bool = True) -> Callable:
+        """A job through the warm club session; its result goes to job.data."""
         def work():
             try:
-                job.data = self.live.run(cfg, login, fn, job.say)
+                job.data = self.live.run(cfg, login, fn, job.say, retry=retry)
             except SiteError as e:
                 job.say(f"Couldn't read the club site: {e}")
                 return False

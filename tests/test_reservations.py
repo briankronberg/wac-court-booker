@@ -60,7 +60,8 @@ class FakeLive:
     def __init__(self):
         self.site = FakeSite()
 
-    def run(self, cfg, login, fn, say, timeout=600):
+    def run(self, cfg, login, fn, say, timeout=600, retry=True):
+        self.retry = retry
         return asyncio.run(fn(self.site))
 
     def close(self):
@@ -83,7 +84,7 @@ def test_list_and_cancel_jobs(srv, monkeypatch, tmp_path):
     assert not r["ok"] and "Confirm" in r["errors"][0]  # the page must confirm first
     _, r = call(srv, "/api/job", {"kind": "cancel", "reservation": item, "confirmed": True})
     j = wait_job(srv, r["job"]["id"])
-    assert j["ok"] and live.site.cancelled == [(G1, "11/28/2026", 510)]
+    assert j["ok"] and live.site.cancelled == [(G1, "11/28/2026", 510)] and live.retry is False
     assert "Cancelled Sat Nov 28, 8:30 AM to 10:00 AM on court 5." in j["lines"]
     _, res = call(srv, "/api/results")
     assert res["results"][0]["status"] == "cancelled"

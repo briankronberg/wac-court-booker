@@ -106,6 +106,33 @@ def test_save_a_machine_booking_from_the_page(srv):  # noqa: F811
     assert not r["ok"] and "doesn't take a ball machine" in r["errors"][0]
 
 
+def test_api_reads_the_value_and_refuses_on_a_message():
+    site = S.ClubSite("u", lambda: "", log=lambda m: None)
+    answers = []
+
+    async def url():
+        return "https://hnd-p-ols.spectrumng.net/LCRAC/Home.aspx"
+
+    async def js(expr, arg=None, timeout=15):
+        return answers.pop(0)
+    site.url, site.js = url, js
+    ok = {"status": 200, "url": "x", "text": json.dumps({"d": {"Value": [1], "Message": "note", "IsException": False}})}
+    answers.append(dict(ok))
+    assert asyncio.run(site.api("GetX", {})) == [1]  # a note on a read is fine
+    answers.append(dict(ok))
+    try:
+        asyncio.run(site.api("SetScheduleInformation", {}, strict=True))
+    except engine.SiteError as e:
+        assert "note" in str(e)
+    else:
+        raise AssertionError("a refusal was taken as success")
+    answers.append({"status": 500, "url": "x", "text": "{}"})
+    try:
+        asyncio.run(site.api("GetX", {}))
+    except engine.SiteError as e:
+        assert "HTTP 500" in str(e)
+
+
 def test_engine_asks_the_site_for_the_machine():
     b, _ = parse(machine="genie")
     seen = []

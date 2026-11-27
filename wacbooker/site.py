@@ -636,7 +636,7 @@ class ClubSite:
                 and free_for(avail["courts"].get(slot.court, []), slot.start, slot.length)):
             raise SiteError(f"{slot.describe()} isn't offered", "taken")
         await self.api("SetScheduleInformation", {"scheduleInformation": json.dumps(info, separators=(",", ":")),
-                                                  "startTime": str(slot.start)})
+                                                  "startTime": str(slot.start)}, strict=True)
         self.family_url = FAMILY_URL
         await self.goto(self.family_url, timeout=90)
         if not await self._family_loaded(slot, 60):
@@ -649,9 +649,10 @@ class ClubSite:
         self.log(f"staged {slot.describe()}")
 
     # ---------------------------------------------------------------- web service (read-only)
-    async def api(self, method: str, payload: dict, timeout: float = 60):
+    async def api(self, method: str, payload: dict, timeout: float = 60, strict: bool = False):
         """Call the club's scheduler web service with this sign-in. Returns its Value.
-        Signs in again once if the session has run out."""
+        Signs in again once if the session has run out. With strict, a message from the
+        club counts as a refusal (the club page shows it and stops), as for SetScheduleInformation."""
         for attempt in (1, 2):
             if "spectrumng" not in (await self.url()).lower():
                 await self.goto(HOME_URL, timeout=60)
@@ -663,7 +664,7 @@ class ClubSite:
                 except ValueError:
                     d = None
                 if isinstance(d, dict):
-                    if d.get("IsException"):
+                    if d.get("IsException") or (strict and str(d.get("Message") or "").strip()):
                         raise SiteError(f"the club site said: {str(d.get('Message') or 'error')[:160]}")
                     return d.get("Value")
             if attempt == 1 and ("login" in str((r or {}).get("url", "")).lower() or "<html" in text[:300].lower()):

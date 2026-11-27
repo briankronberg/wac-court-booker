@@ -25,7 +25,7 @@ class FakeApi(S.ClubSite):
         super().__init__("u", lambda: "", log=lambda m: None)
         self.table, self.calls = table, []
 
-    async def api(self, method, payload, timeout=60):
+    async def api(self, method, payload, timeout=60, strict=False):
         self.calls.append((method, payload))
         v = self.table[method]
         return v(payload) if callable(v) else v
@@ -118,7 +118,7 @@ class FakeLive:
     def __init__(self):
         self.site = FakeApi(table())
 
-    def run(self, cfg, login, fn, say, timeout=600):
+    def run(self, cfg, login, fn, say, timeout=600, retry=True):
         return asyncio.run(fn(self.site))
 
     def close(self):
