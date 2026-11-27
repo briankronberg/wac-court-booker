@@ -146,6 +146,13 @@ label.field span { display: block; font-weight: 600; margin-bottom: 4px; }
 .errors { color: var(--bad); margin: 0 0 10px; padding-left: 20px; }
 
 /* results */
+.res-bar { align-items: flex-end; gap: 12px; }
+.field.compact { margin: 0; }
+.field.compact input, .field.compact select { width: auto; }
+.res-day { margin: 18px 0 4px; font-size: 1rem; }
+.res-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.res-row .tag { display: inline-block; font-size: .72rem; font-weight: 700; color: var(--accent); border: 1px solid var(--accent-line); border-radius: 99px; padding: 1px 8px; margin-left: 6px; vertical-align: 1px; }
+.res-row .tag.warn { color: inherit; background: var(--warn-soft); border-color: var(--warn-line); }
 .result { display: grid; grid-template-columns: 40px 1fr; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); }
 .result:first-child { border-top: 0; }
 .ico { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; }
@@ -208,6 +215,7 @@ dialog::backdrop { background: rgba(10,20,14,.45); }
     </div>
     <nav class="tabs" aria-label="Pages">
       <button type="button" data-view="home">My bookings</button>
+      <button type="button" data-view="reservations">My reservations</button>
       <button type="button" data-view="results">What happened</button>
       <button type="button" data-view="settings">Settings</button>
     </nav>
@@ -288,10 +296,10 @@ function openDialog(html) { $("#dlg-body").innerHTML = html; if (!dlg.open) dlg.
 function closeDialog() { if (dlg.open) dlg.close(); }
 dlg.addEventListener("cancel", (e) => { if (dlg.dataset.locked) e.preventDefault(); });
 
-function confirmBox(title, text, yes = "Yes", danger = false) {
+function confirmBox(title, text, yes = "Yes", danger = false, no = "Cancel") {
   return new Promise((resolve) => {
     openDialog(`<h2>${esc(title)}</h2><p>${esc(text)}</p>
-      <div class="row end"><button class="btn" id="c-no" type="button">Cancel</button>
+      <div class="row end"><button class="btn" id="c-no" type="button">${esc(no)}</button>
       <button class="btn ${danger ? "danger solid" : "primary"}" id="c-yes" type="button">${esc(yes)}</button></div>`);
     $("#c-no").onclick = () => { closeDialog(); resolve(false); };
     $("#c-yes").onclick = () => { closeDialog(); resolve(true); };
@@ -380,7 +388,7 @@ async function refresh() {
   S = await api("/api/state");
   $("#ver").textContent = "version " + S.version;
   // The calendar window follows its own job.
-  if (S.job && !S.job.done && !dlg.open && S.job.kind !== "calendar") followJob(S.job, () => {});
+  if (S.job && !S.job.done && !dlg.open && !["calendar", "reservations"].includes(S.job.kind)) followJob(S.job, () => {});
   if (!S.logins.length && welcomeStep === null) welcomeStep = 0;
   render();
 }
@@ -392,6 +400,7 @@ function render() {
   if (welcomeStep !== null) return renderWelcome(el);
   if (form) return renderForm(el);
   if (view === "results") return renderResults(el);
+  if (view === "reservations") return renderReservations(el);
   if (view === "settings") return renderSettings(el);
   return renderHome(el);
 }
@@ -495,17 +504,23 @@ async function bookingAction(act, b) {
 // ------------------------------------------------------------------ booking form
 function startForm(b) {
   const login = b ? b.login : (S.logins[0] || {}).nickname;
-  form = b ? { old_name: b.name, login, play: b.play, partners: [...b.partners], weekly: b.weekly, day: b.day, date: b.date,
+  form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners], weekly: b.weekly, day: b.day, date: b.date,
     time: b.time, length: b.length, shorter_ok: b.shorter_ok, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
-    : { login, play: "singles", partners: [], weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, courts: [], any: true, errors: [], q: "" };
+    : { login, play: "singles", machine: "genie", partners: [], weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, courts: [], any: true, errors: [], q: "" };
   window.scrollTo(0, 0);
   render();
 }
 
 function loginOf(nick) { return S.logins.find((l) => l.nickname === nick) || { family: [], buddies: [] }; }
 
+const MACHINE_COURTS = [2, 3, 8, 9, 10];
+const MACHINE_TEXT = { genie: "Genie ball machine", regular: "Regular ball machine", either: "Ball machine (Genie first)" };
+function needOf(f) { return f.play === "doubles" ? 3 : f.play === "machine" ? 0 : 1; }
+function courtsFor(f) { return f.play === "machine" ? S.courts.filter((c) => MACHINE_COURTS.includes(c)) : S.courts; }
+function whatText(f) { return f.play === "machine" ? MACHINE_TEXT[f.machine] || "Ball machine" : f.play === "singles" ? "Singles" : "Doubles"; }
+
 function summaryText(f) {
-  const need = f.play === "doubles" ? 3 : 1;
+  const need = needOf(f);
   const missing = [];
   if (f.partners.length !== need) missing.push(need === 1 ? "who you're playing with" : `${need - f.partners.length} more player${need - f.partners.length > 1 ? "s" : ""}`);
   if (f.weekly ? f.day === null : !f.date) missing.push(f.weekly ? "the day" : "the date");
@@ -515,12 +530,13 @@ function summaryText(f) {
   let when;
   if (f.weekly) when = `Every ${DAYS[f.day]}`;
   else { const d = new Date(f.date + "T12:00:00"); when = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }); }
-  const courts = f.courts.length ? `Court ${f.courts.join(", then ")}${f.any ? ", then any other court" : ""}` : "Any court";
+  const other = f.play === "machine" ? "court that takes a ball machine" : "court";
+  const courts = f.courts.length ? `Court ${f.courts.join(", then ")}${f.any ? `, then any other ${other}` : ""}` : `Any ${other}`;
   const shorter = f.shorter_ok && f.length > 30 ? `, or shorter if no court has ${f.length} minutes` : "";
   const pt = primeOf(f);
-  const how = !pt ? "" : pt.kind === "all" ? " Prime Time singles: the app books it 24 hours ahead."
+  const how = !pt ? "" : pt.kind === "all" ? " Prime Time: the app books it 24 hours ahead."
     : ` Books in two parts: ${spanText(pt.main.start, pt.main.length)} a week ahead, ${spanText(pt.prime.start, pt.prime.length)} 24 hours ahead.`;
-  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${f.play === "singles" ? "Singles" : "Doubles"} with ${namesText(f.partners)}. ${courts}.${how}` };
+  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${how}` };
 }
 
 // Prime Time (the club's FAQ). Singles in these hours can only be booked 24 hours ahead.
@@ -544,7 +560,7 @@ function formWeekday(f) {
 // null (not Prime Time, or doubles), {kind:"all"} or {kind:"split", main, prime}.
 function primeOf(f) {
   const wd = formWeekday(f);
-  if (f.play !== "singles" || wd === null || f.time === null) return null;
+  if (!["singles", "machine"].includes(f.play) || wd === null || f.time === null) return null;
   const p = splitPrime(wd, f.time, f.length);
   if (p.length === 1) return p[0].prime ? { kind: "all" } : null;
   return { kind: "split", main: p.find((x) => !x.prime), prime: p.find((x) => x.prime) };
@@ -574,14 +590,16 @@ function primeFixes(f) {
 function renderForm(el) {
   const f = form;
   const lg = loginOf(f.login);
-  const need = f.play === "doubles" ? 3 : 1;
+  const need = needOf(f);
   let n = 0;
   const sec = (title, body, hint = "") => `<section class="form-section"><h3><span class="n">${++n}</span>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ""}${body}</section>`;
   const choice = (key, val, label, sub = "") => `<button type="button" class="choice" data-k="${key}" data-v="${esc(JSON.stringify(val))}" aria-pressed="${JSON.stringify(f[key]) === JSON.stringify(val)}">${label}${sub ? `<small>${sub}</small>` : ""}</button>`;
 
   let h = `<div class="page-head"><h2>${f.old_name ? "Change booking" : "Book a court"}</h2><button class="btn" id="f-cancel" type="button">Cancel</button></div><div class="card">`;
   if (S.logins.length > 1) h += sec("Whose club login books it?", `<div class="choices">${S.logins.map((l) => choice("login", l.nickname, esc(l.nickname), esc(l.username))).join("")}</div>`);
-  h += sec("Singles or doubles?", `<div class="choices">${choice("play", "singles", "Singles", "You and 1 other")}${choice("play", "doubles", "Doubles", "You and 3 others")}</div>`);
+  h += sec("What are you booking?", `<div class="choices">${choice("play", "singles", "Singles", "You and 1 other")}${choice("play", "doubles", "Doubles", "You and 3 others")}${choice("play", "machine", "Ball machine", "Just you")}</div>`);
+  if (f.play === "machine") h += sec("Which ball machine?", `<div class="choices">${choice("machine", "genie", "Genie", "Works with its phone app")}${choice("machine", "regular", "Regular", "The standard machine")}${choice("machine", "either", "Either one", "Genie first")}</div>`,
+    "The app finds a court that takes a ball machine (courts 2, 3, 8, 9 and 10) at a time the machine is free.");
 
   // people
   const fam = lg.family || [], bud = lg.buddies || [];
@@ -599,32 +617,32 @@ function renderForm(el) {
   if (!lg.family_read && all.length) people += `<p class="small muted">Family members aren't listed yet. <button class="linkish" id="f-readf" type="button">Find my family members</button></p>`;
   people += `<details style="margin-top:10px" ${all.length ? "" : "open"}><summary>Someone else (not in the list)</summary>
      <div class="row" style="margin-top:8px"><input type="text" id="f-other" placeholder="Full name, as the club site shows it" style="max-width:320px"><button class="btn" id="f-addother" type="button">Add</button></div></details>`;
-  h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
+  if (need) h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
 
   h += sec("How often?", `<div class="row once-row"><div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>
      ${f.weekly ? "" : `<div class="row avail"><button class="btn" id="f-cal" type="button">See Available Courts</button></div>`}</div>`,
     f.weekly ? "" : "For a one-off date you can see every court for the day first. Press an open court there to use its time here.");
   if (f.weekly) h += sec("Which day?", `<div class="choices">${DAYS.map((d, i) => choice("day", i, d.slice(0, 3), "")).join("")}</div>`);
   else {
-    const min = new Date(Date.now() + (f.play === "singles" ? 1 : 7) * 864e5).toISOString().slice(0, 10);
+    const min = new Date(Date.now() + (f.play === "doubles" ? 7 : 1) * 864e5).toISOString().slice(0, 10);
     h += sec("Which date?", `<input type="date" id="f-date" min="${min}" value="${esc(f.date || "")}">`,
-      f.play === "singles" ? "More than a week away (or more than a day away for Prime Time). For sooner dates, book on the club site." : "More than a week away. For sooner dates, book on the club site.");
+      f.play !== "doubles" ? "More than a week away (or more than a day away for Prime Time). For sooner dates, book on the club site." : "More than a week away. For sooner dates, book on the club site.");
   }
   const times = []; for (let m = 5 * 60; m <= 21 * 60 + 30; m += 30) times.push(m);
   h += sec("What time do you start?", `<select id="f-time" aria-label="Start time"><option value="">Choose a time</option>${times.map((m) => `<option value="${m}" ${f.time === m ? "selected" : ""}>${fmtTime(m)}</option>`).join("")}</select>`);
   h += sec("How long?", `<div class="choices">${[30, 60, 90].map((L) => choice("length", L, `${L} min`)).join("")}</div>
      ${f.length > 30 ? `<label class="check"><input type="checkbox" id="f-shorter" ${f.shorter_ok ? "checked" : ""}> If no court has ${f.length} minutes, take a shorter time at the same start</label>` : ""}`);
-  h += sec("Which courts?", `<div class="choices">${S.courts.map((c) => { const k = f.courts.indexOf(c); return `<button type="button" class="choice court" data-court="${c}" aria-pressed="${k >= 0}">${c}${k >= 0 ? `<span class="order">${k + 1}</span>` : ""}</button>`; }).join("")}</div>
-     <label class="check" style="margin-top:8px"><input type="checkbox" id="f-any" ${f.any ? "checked" : ""}> Any other court if ${f.courts.length ? "those are" : "none is chosen or they're"} taken</label>`,
+  h += sec("Which courts?", `<div class="choices">${courtsFor(f).map((c) => { const k = f.courts.indexOf(c); return `<button type="button" class="choice court" data-court="${c}" aria-pressed="${k >= 0}">${c}${k >= 0 ? `<span class="order">${k + 1}</span>` : ""}</button>`; }).join("")}</div>
+     <label class="check" style="margin-top:8px"><input type="checkbox" id="f-any" ${f.any ? "checked" : ""}> Any other court${f.play === "machine" ? " that takes a ball machine" : ""} if ${f.courts.length ? "those are" : "none is chosen or they're"} taken</label>`,
     "Press courts in the order you like them: first choice first. Press again to take one off. Choosing none means any court.");
   h += `</div>`;
   const pt = primeOf(f);
   if (pt && pt.kind === "all") {
-    h += `<div class="banner info" style="margin-top:14px"><b>This is Prime Time.</b> The club opens singles courts at this time only 24 hours ahead, so the app books it then, not a week ahead. Doubles can still book a week ahead.</div>`;
+    h += `<div class="banner info" style="margin-top:14px"><b>This is Prime Time.</b> The club opens ${f.play === "machine" ? "ball machines" : "singles courts"} at this time only 24 hours ahead, so the app books it then, not a week ahead. Doubles can still book a week ahead.</div>`;
   } else if (pt) {
     const fixes = primeFixes(f);
     h += `<div class="banner warn" style="margin-top:14px"><h3 style="margin-top:0">Part of this time is Prime Time</h3>
-      <p>${esc(spanText(pt.prime.start, pt.prime.length))} is Prime Time (${esc((S.prime_time || {}).text || "")}). The club opens singles courts then only 24 hours ahead, and lessons often take them.</p>
+      <p>${esc(spanText(pt.prime.start, pt.prime.length))} is Prime Time (${esc((S.prime_time || {}).text || "")}). The club opens ${f.play === "machine" ? "ball machines" : "singles courts"} then only 24 hours ahead, and lessons often take the courts.</p>
       <p>If you keep this time, the app books it in two parts: ${esc(spanText(pt.main.start, pt.main.length))} a week ahead, then ${esc(spanText(pt.prime.start, pt.prime.length))} 24 hours ahead, on the same court if it's free. The second part may not get a court.</p>
       ${fixes.length ? `<p><b>For the best chance, pick a time that stays on one side:</b></p><div class="choices">${fixes.map((x, i) => `<button type="button" class="choice" data-fix="${i}">${esc(x.label)}<small>${esc(x.sub)}</small></button>`).join("")}</div>` : ""}</div>`;
   }
@@ -639,7 +657,7 @@ function renderForm(el) {
   el.querySelectorAll(".choice[data-k]").forEach((b) => (b.onclick = () => {
     const k = b.dataset.k, v = JSON.parse(b.dataset.v);
     f[k] = v;
-    if (k === "play") { const nn = v === "doubles" ? 3 : 1; f.partners = f.partners.slice(0, nn); }
+    if (k === "play") { f.partners = f.partners.slice(0, needOf(f)); if (v === "machine") f.courts = f.courts.filter((c) => MACHINE_COURTS.includes(c)); }
     if (k === "login") f.partners = [];
     f.errors = []; render();
   }));
@@ -684,7 +702,7 @@ function renderForm(el) {
     const day = f.weekly ? nextWeekly(f.day) : f.date;
     if (day === null || day === undefined) { toast(f.weekly ? "Choose the day first." : "Choose the date first.", true); return; }
     if (f.time === null) { toast("Choose the start time first.", true); return; }
-    runJob({ kind: "court-check", login: f.login, date: day, time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: f.courts.length ? f.courts : ["any"] });
+    runJob({ kind: "court-check", login: f.login, date: day, time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: f.courts.length ? f.courts : ["any"], machine: f.play === "machine" ? f.machine : null });
   };
   if ($("#f-cal")) $("#f-cal").onclick = () => openCalendar(f.date || isoDay(new Date()), f.login, f.date ? f.time : null, f.length);
   $("#f-save").onclick = saveForm;
@@ -713,14 +731,15 @@ window.addEventListener("message", (e) => {
   const { date: d, time: m, court: c } = e.data;
   if (!form) { toast("Press Book a court first, then pick a court in the calendar."); return; }
   form.weekly = false; form.date = d; form.time = +m;
-  if (S.courts.includes(+c)) form.courts = [+c, ...form.courts.filter((x) => x !== +c)];
+  if (form.play === "machine" && !MACHINE_COURTS.includes(+c)) toast(`Court ${c} doesn't take a ball machine, so your courts stay as they were.`);
+  else if (S.courts.includes(+c)) form.courts = [+c, ...form.courts.filter((x) => x !== +c)];
   form.errors = []; render(); window.focus();
   toast(`Using ${fmtTime(+m)} on ${d}, court ${c} first.`);
 });
 
 async function saveForm() {
   const f = form;
-  const body = { old_name: f.old_name, login: f.login, play: f.play, partners: f.partners, weekly: f.weekly, day: f.day, date: f.date,
+  const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners, weekly: f.weekly, day: f.day, date: f.date,
     time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   $("#f-save").disabled = true;
   const r = await api("/api/booking", body);
@@ -738,6 +757,103 @@ function familyJob(login) {
     if (!ok) return resolve(null);
     resolve(await runJob({ kind: "family", login }));
   });
+}
+
+// ------------------------------------------------------------------ my reservations
+// What's booked on the club site for a date range (default: today and the next 29 days),
+// with Cancel. Read through the app's warm club session, so it takes a few seconds.
+const RES = { preset: "next30", from: null, to: null, family: false, login: null, data: null, loading: false, error: "" };
+function resRange(p) {
+  const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return isoDay(x); };
+  const now = new Date();
+  if (p === "next7") return [d(0), d(6)];
+  if (p === "next90") return [d(0), d(89)];
+  if (p === "past30") return [d(-30), d(0)];
+  if (p === "month") return [isoDay(new Date(now.getFullYear(), now.getMonth(), 1)), isoDay(new Date(now.getFullYear(), now.getMonth() + 1, 0))];
+  return [d(0), d(29)];
+}
+
+async function loadReservations() {
+  if (RES.loading) return;
+  if (!RES.from) [RES.from, RES.to] = resRange(RES.preset);
+  RES.login = RES.login || (S.logins[0] || {}).nickname;
+  if (!RES.login) { RES.error = "Add your club login first (Settings)."; render(); return; }
+  RES.loading = true; RES.error = ""; render();
+  try {
+    const r = await api("/api/job", { kind: "reservations", login: RES.login, from: RES.from, to: RES.to, family: RES.family });
+    if (!r.ok) throw new Error((r.errors || []).join(" "));
+    let j = r.job;
+    while (!j.done) {
+      await new Promise((ok) => setTimeout(ok, 400));
+      const x = await api("/api/job?id=" + encodeURIComponent(j.id));
+      if (!x.ok) throw new Error("The check stopped.");
+      j = x.job;
+    }
+    if (!j.ok || !j.data) throw new Error(j.lines.join(" ") || "Couldn't read your reservations.");
+    RES.data = j.data;
+  } catch (e) {
+    RES.error = e.message; RES.data = null;
+  } finally {
+    RES.loading = false;
+    if (view === "reservations" && !form) render();
+  }
+}
+
+function renderReservations(el) {
+  const presets = [["next30", "Next 30 days"], ["next7", "Next 7 days"], ["next90", "Next 90 days"], ["month", "This month"], ["past30", "Past 30 days"], ["custom", "Pick dates"]];
+  if (!RES.from) [RES.from, RES.to] = resRange(RES.preset);
+  let h = `<div class="page-head"><div><h2>My reservations</h2><p class="muted" style="margin:4px 0 0">What's booked on the club site. Cancelling inside 24 hours of the start costs the club's late-cancel fee.</p></div>
+    <button class="btn" id="r-cal" type="button">See Available Courts</button></div>`;
+  h += `<div class="card"><div class="row res-bar">
+    <label class="field compact"><span>Show</span><select id="r-preset">${presets.map(([v, t]) => `<option value="${v}" ${RES.preset === v ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+    <label class="field compact"><span>From</span><input type="date" id="r-from" value="${esc(RES.from)}"></label>
+    <label class="field compact"><span>To</span><input type="date" id="r-to" value="${esc(RES.to)}"></label>
+    ${S.logins.length > 1 ? `<label class="field compact"><span>Login</span><select id="r-login">${S.logins.map((l) => `<option ${l.nickname === RES.login ? "selected" : ""}>${esc(l.nickname)}</option>`).join("")}</select></label>` : ""}
+    <label class="check"><input type="checkbox" id="r-family" ${RES.family ? "checked" : ""}> Include family members</label>
+    <button class="btn primary" id="r-go" type="button" ${RES.loading ? "disabled" : ""}>↻ Refresh</button></div>`;
+  if (RES.loading) h += `<p><span class="spin"></span>Reading your reservations from the club site…</p>`;
+  else if (RES.error) h += `<p class="status-no">${esc(RES.error)}</p>`;
+  else if (RES.data) {
+    const items = RES.data.items;
+    if (!items.length) h += `<p class="muted">No reservations from ${esc(mdOf(RES.data.from))} to ${esc(mdOf(RES.data.to))}.</p>`;
+    let lastDay = "";
+    for (const [i, r] of items.entries()) {
+      if (r.day !== lastDay) {
+        lastDay = r.day;
+        h += `<h3 class="res-day">${esc(new Date(r.day + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }))}</h3>`;
+      }
+      const tags = [r.mine === false ? `<span class="tag">FAMILY</span>` : "", r.fee && !r.started ? `<span class="tag warn">LESS THAN 24 H</span>` : "", r.started ? `<span class="tag">STARTED</span>` : ""].join("");
+      h += `<div class="res-row"><div><b>${esc(r.span)}</b> ${tags}<br><span class="muted">${esc(r.what)}${r.court ? `, court ${r.court}` : ""}</span></div>
+        ${r.started ? "" : `<button class="btn danger" data-cancel="${i}" type="button">Cancel</button>`}</div>`;
+    }
+    h += `<p class="muted small" style="margin-top:14px">Read from the club site at ${esc(RES.data.read_at)}.</p>`;
+  }
+  h += `</div>`;
+  el.innerHTML = h;
+  const reload = () => { RES.data = null; loadReservations(); };
+  $("#r-preset").onchange = (e) => { RES.preset = e.target.value; if (RES.preset !== "custom") { [RES.from, RES.to] = resRange(RES.preset); reload(); } else render(); };
+  $("#r-from").onchange = (e) => { if (e.target.value) { RES.from = e.target.value; RES.preset = "custom"; reload(); } };
+  $("#r-to").onchange = (e) => { if (e.target.value) { RES.to = e.target.value; RES.preset = "custom"; reload(); } };
+  if ($("#r-login")) $("#r-login").onchange = (e) => { RES.login = e.target.value; reload(); };
+  $("#r-family").onchange = (e) => { RES.family = e.target.checked; reload(); };
+  $("#r-go").onclick = reload;
+  $("#r-cal").onclick = () => openCalendar(isoDay(new Date()), RES.login, null, 0);
+  el.querySelectorAll("[data-cancel]").forEach((b) => (b.onclick = () => cancelReservation(RES.data.items[+b.dataset.cancel])));
+  if (!RES.data && !RES.loading && !RES.error) loadReservations();
+}
+
+function mdOf(iso) { const d = new Date(iso + "T12:00:00"); return `${d.getMonth() + 1}/${d.getDate()}`; }
+
+async function cancelReservation(r) {
+  const when = `${new Date(r.day + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}, ${r.span}`;
+  let text = `${when}: ${r.what}${r.court ? ` on court ${r.court}` : ""}. The court goes back to the club for anyone to book.`;
+  if (r.mine === false) text += " This is a family member's reservation.";
+  if (r.fee) text += " It starts in less than 24 hours, so the club charges its late-cancel fee.";
+  text += " This can't be undone.";
+  if (!(await confirmBox("Cancel this reservation?", text, r.fee ? "Cancel it and pay the fee" : "Cancel reservation", true, "Keep it"))) return;
+  await runJob({ kind: "cancel", login: RES.login, confirmed: true, reservation: r });
+  RES.data = null;
+  if (view === "reservations") loadReservations();
 }
 
 // ------------------------------------------------------------------ results

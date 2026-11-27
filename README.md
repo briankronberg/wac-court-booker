@@ -20,9 +20,10 @@ Run setup.cmd again any time to update the app. Your bookings and logins are kep
 
 ## Day to day
 
-Open **WAC Court Booker** from the Start menu or your desktop. It opens in its own window with three pages:
+Open **WAC Court Booker** from the Start menu or your desktop. It opens in its own window with four pages:
 
 - **My bookings:** each booking in plain words ("Every Tuesday, 6:00 to 7:30 PM, singles with Pat"), the next dates it books, when the app books them and when the PC must be on. Press **Book a court** to add one. Each booking has **Change**, **Skip a week**, **Pause** and **Remove**.
+- **My reservations:** what's actually booked on the club site, read live: the next 30 days unless you pick other dates (next 7 or 90 days, this month, the past 30 days, or any range). Tick **Include family members** to see theirs too, marked "Family". Each reservation has **Cancel**: the app asks first, warns when it's less than 24 hours away (the club charges a late-cancel fee then), cancels it on the club site and tells you when it's done.
 - **What happened:** every booking run, newest first.
 - **Settings:** your club login (test it, re-read your buddy list or family), wake timers, running while signed out, the clock check, a real test booking you can cancel straight after, which browser the app uses, and a button that puts the shortcut on your desktop (or makes it again).
 
@@ -34,7 +35,7 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
 
 ## What a booking can be
 
-- Singles (1 partner) or doubles (3 partners), picked from your buddy list on the club site: click their names (type a few letters to narrow the list). Family members on your club account come first, marked "Family". The club site shows them only once a court is in your cart, so the app offers to find them: it puts a quiet court in the cart for a few seconds, then presses Back, and nothing is booked. Each test or real booking also updates the list. Anyone else: choose "Someone else" and type their full name.
+- Singles (1 partner), doubles (3 partners) or a **ball machine** (just you), with partners picked from your buddy list on the club site: click their names (type a few letters to narrow the list). Family members on your club account come first, marked "Family". The club site shows them only once a court is in your cart, so the app offers to find them: it puts a quiet court in the cart for a few seconds, then presses Back, and nothing is booked. Each test or real booking also updates the list. Anyone else: choose "Someone else" and type their full name.
 - 30, 60 or 90 minutes, optionally falling back to shorter at the same start time.
 - Courts in order of preference (press them in order), optionally followed by any other court.
 - Weekly on a day, or a one-off date, with skip dates.
@@ -43,14 +44,18 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
   - Both only read the court sheet; nothing is booked.
 - Booked by any of the club logins you've added on this PC.
 
+### Ball machines
+
+The club has two ball machines: the **Genie** (you control it from its phone app, so no walking to the far side of the court) and the **regular** one. They go only on courts 2, 3, 8, 9 and 10. On the club site you find a free machine, pick a time, then pick a court. In the app you choose **Ball machine**, then **Genie**, **Regular** or **Either one** (Genie first), and the time and courts as usual. When the booking opens, the app finds a court that takes a machine at a time the machine is free, and books both together. **See Available Courts** shows when each machine is free, next to the courts, and **Validate booking** checks your machine and courts. Like singles, a ball machine in Prime Time is booked 24 hours ahead.
+
 The club allows 2 reservations per login per day. The app warns when a day would go over that and refuses bookings that overlap on one login.
 
 ### Prime Time
 
-Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:00-8:00 PM. In those hours the club opens **singles** courts only 24 hours ahead; doubles still book 1 week and 1 hour ahead (see the [WAC Tennis FAQ](https://www.thewac.com/sports/tennis/tennis-faq/)). The app follows that:
+Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:00-8:00 PM. In those hours the club opens **singles** courts and **ball machines** only 24 hours ahead; doubles still book 1 week and 1 hour ahead (see the [WAC Tennis FAQ](https://www.thewac.com/sports/tennis/tennis-faq/)). The app follows that:
 
-- A singles booking entirely in Prime Time is booked 24 hours ahead.
-- A singles booking that runs into or out of Prime Time (for example Monday 8:00-9:30 AM) is booked in two parts: the regular hours a week ahead (8:00-9:00), then the Prime Time part 24 hours ahead (9:00-9:30), on the same court if it's free. If the first part isn't booked, the second isn't tried. Each part counts toward the 2 reservations a day. Prime Time is often taken by lessons, so the second part may not get a court. The booking form warns about this and offers nearby times that stay on one side.
+- A singles or ball machine booking entirely in Prime Time is booked 24 hours ahead.
+- A singles or ball machine booking that runs into or out of Prime Time (for example Monday 8:00-9:30 AM) is booked in two parts: the regular hours a week ahead (8:00-9:00), then the Prime Time part 24 hours ahead (9:00-9:30), on the same court if it's free. If the first part isn't booked, the second isn't tried. Each part counts toward the 2 reservations a day. Prime Time is often taken by lessons, so the second part may not get a court. The booking form warns about this and offers nearby times that stay on one side.
 
 ## The config file
 

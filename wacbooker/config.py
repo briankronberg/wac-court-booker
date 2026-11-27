@@ -20,7 +20,13 @@ from . import clubtime, paths
 
 COURTS = (2, 3, 4, 5, 6, 8, 9, 10)
 LENGTHS = (30, 60, 90)
-PARTNERS_FOR = {"singles": 1, "doubles": 3}
+PARTNERS_FOR = {"singles": 1, "doubles": 3, "machine": 0}
+# Ball machines: which one to book. "either" tries the Genie first (it works with a
+# phone app), then the regular one.
+MACHINES = ("genie", "regular", "either")
+MACHINE_TEXT = {"genie": "Genie ball machine", "regular": "regular ball machine",
+                "either": "ball machine (Genie first)"}
+MACHINE_COURTS = (2, 3, 8, 9, 10)  # the courts a ball machine goes on
 BROWSERS = ("hidden", "edge", "chrome")
 PER_DAY_CAP = 2
 
@@ -51,6 +57,8 @@ bookings: []
 #    shorter_ok: true       # if no court has 90, try 60, then 30 (same start time)
 #    courts: [5, 4, 3, any] # preference order; 'any' only at the end, optional
 #    skip: [2026-12-22, 2026-12-29]
+#  A ball machine:  play: machine,  machine: genie (or regular, or either),  partners: []
+#  (courts 2, 3, 8, 9 and 10 take a ball machine)
 #    active: true
 """
 
@@ -98,6 +106,20 @@ class Booking:
     shorter_ok: bool = False
     skip: list[date] = field(default_factory=list)
     active: bool = True
+    machine: str | None = None   # play: machine only
+
+    @property
+    def what(self) -> str:
+        """'Singles', 'Doubles' or 'Genie ball machine'..., for people."""
+        if self.play == "machine":
+            t = MACHINE_TEXT.get(self.machine or "either", "ball machine")
+            return t[0].upper() + t[1:]
+        return self.play.capitalize()
+
+    @property
+    def site_play(self) -> str:
+        """What the club site books: 'singles', 'doubles' or 'machine:<which>'."""
+        return f"machine:{self.machine or 'either'}" if self.play == "machine" else self.play
 
     @property
     def lengths(self) -> list[int]:
@@ -117,8 +139,8 @@ class Booking:
 
     @property
     def parts(self) -> list[Part]:
-        """Prime Time only limits singles; doubles is always one part."""
-        if self.play != "singles" or self.weekday is None:
+        """Prime Time limits singles and ball machines; doubles is always one part."""
+        if self.play not in ("singles", "machine") or self.weekday is None:
             return [Part("main", self.time, self.length, False)]
         pieces = clubtime.split_prime(self.weekday, self.time, self.length)
         if len(pieces) == 1:
@@ -146,8 +168,9 @@ class Booking:
         when = (clubtime.DAYS[self.day] + "s") if self.day is not None else f"{self.date:%a %m/%d/%Y}"
         courts = ", ".join(str(c) for c in self.courts)
         extra = ", shorter ok" if self.shorter_ok else ""
+        who = f" with {', '.join(self.partners)}" if self.partners else ""
         return (f"{when} {clubtime.fmt_time(self.time)}, {self.length} min{extra}, "
-                f"{self.play} with {', '.join(self.partners)}; courts {courts}; login {self.login}")
+                f"{self.what.lower() if self.play != 'machine' else self.what}{who}; courts {courts}; login {self.login}")
 
     def occurrences(self, after: datetime, count: int = 1, part: str = "main") -> list[clubtime.Occurrence]:
         p = self.part(part)
@@ -223,7 +246,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
     if not name:
         errs.append(f"{label}: needs a name.")
     known = {"name", "login", "play", "partners", "day", "date", "time", "length", "shorter_ok",
-             "courts", "skip", "active"}
+             "courts", "skip", "active", "machine"}
     for k in raw:
         if k not in known:
             errs.append(f"{label}: '{k}' isn't a setting I know. Check the spelling.")
@@ -234,14 +257,25 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
         errs.append(f"{label}: say which login books it (login: ...).")
 
     play = str(raw.get("play") or "").strip().lower()
+    if play in ("ball machine", "ball_machine", "ballmachine"):
+        play = "machine"
     if play not in PARTNERS_FOR:
-        errs.append(f"{label}: play must be singles or doubles, not '{raw.get('play')}'.")
+        errs.append(f"{label}: play must be singles, doubles or machine, not '{raw.get('play')}'.")
+    machine = None
+    if play == "machine":
+        machine = str(raw.get("machine") or "either").strip().lower()
+        if machine not in MACHINES:
+            errs.append(f"{label}: machine must be genie, regular or either, not '{raw.get('machine')}'.")
+    elif raw.get("machine") is not None:
+        errs.append(f"{label}: 'machine' is only for play: machine.")
 
     partners_raw = raw.get("partners") or []
     if isinstance(partners_raw, str):
         partners_raw = [partners_raw]
     partners = [" ".join(str(p).split()) for p in partners_raw if str(p).strip()]
-    if play in PARTNERS_FOR and len(partners) != PARTNERS_FOR[play]:
+    if play == "machine" and partners:
+        errs.append(f"{label}: a ball machine booking is just you; leave partners empty.")
+    elif play in PARTNERS_FOR and len(partners) != PARTNERS_FOR[play]:
         n = PARTNERS_FOR[play]
         errs.append(f"{label}: {play} needs {n} partner{'s' if n > 1 else ''}, "
                     f"but {len(partners)} {'is' if len(partners) == 1 else 'are'} listed.")
@@ -302,6 +336,9 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
             if n not in COURTS:
                 errs.append(f"{label}: there's no court {n}. Courts are "
                             f"{', '.join(map(str, COURTS))}.")
+            elif play == "machine" and n not in MACHINE_COURTS:
+                errs.append(f"{label}: court {n} doesn't take a ball machine. Those courts are "
+                            f"{', '.join(map(str, MACHINE_COURTS))}.")
             elif n in courts:
                 errs.append(f"{label}: court {n} is listed twice.")
             else:
@@ -316,7 +353,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
         return None
     return Booking(name=name, login=login, play=play, partners=partners, time=minutes,
                    length=length, courts=courts, day=day, date=one_off, shorter_ok=shorter_ok,
-                   skip=skip, active=active)
+                   skip=skip, active=active, machine=machine)
 
 
 def _days_overlap(a: Booking, b: Booking) -> bool:
@@ -443,14 +480,17 @@ def _seq(doc: Any, key: str) -> CommentedSeq:
 
 
 def auto_name(play: str, partners: list[str], day: int | None, one_off: date | None, minutes: int,
-              taken: list[str] = ()) -> str:
+              taken: list[str] = (), machine: str | None = None) -> str:
     """A booking's name, made from what it books: 'Tue 6:00 PM singles with Andrea', or
     'Sat 12/19 6:00 PM doubles with Pat, Sam, Kim' for a one-off. Partners by first name.
     Gets ' (2)', ' (3)' ... if another booking already has that name."""
     when = clubtime.DAYS[day][:3] if day is not None else (
         f"{one_off:%a} {one_off.month}/{one_off.day}" if one_off else "")
     firsts = [p.split()[0] for p in partners if p.split()]
-    base = " ".join(x for x in (when, clubtime.fmt_time(minutes), play) if x)
+    what = MACHINE_TEXT.get(machine or "either", "ball machine") if play == "machine" else play
+    if play == "machine" and what.startswith("ball machine"):
+        what = "ball machine"
+    base = " ".join(x for x in (when, clubtime.fmt_time(minutes), what) if x)
     if firsts:
         base += " with " + ", ".join(firsts)
     used = {t.lower() for t in taken}
@@ -465,6 +505,8 @@ def booking_to_map(b: Booking) -> CommentedMap:
     m["name"] = b.name
     m["login"] = b.login
     m["play"] = b.play
+    if b.play == "machine":
+        m["machine"] = b.machine or "either"
     m["partners"] = _flow(b.partners)
     if b.day is not None:
         m["day"] = clubtime.DAYS[b.day]

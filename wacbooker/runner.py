@@ -342,7 +342,7 @@ async def dry_run(cfg: Config, b: Booking, say: Say) -> bool:
         return False
     try:
         await site.login()
-        open_by_len = await site.find_open(occ.day.strftime("%m/%d/%Y"), b.time, b.lengths, b.play)
+        open_by_len = await site.find_open(occ.day.strftime("%m/%d/%Y"), b.time, b.lengths, b.site_play)
         for L in b.lengths:
             courts = sorted(open_by_len.get(L, {}))
             say(f"  {L} min at {clubtime.fmt_time(b.time)}: "
@@ -427,6 +427,9 @@ async def court_check_on(site: ClubSite, day, start: int, lengths: list[int], co
     """Which courts are free right now at `start` on `day`, for each length (read-only)."""
     avail = await site.day_availability(day.strftime("%m/%d/%Y"), machines=bool(machine))
     now = clubtime.now_central()
+    if machine == "either":  # the Genie first, as a booking would
+        machine = "genie" if courts_free(avail, day, now, start, lengths[0], "genie") or not courts_free(
+            avail, day, now, start, lengths[0], "regular") else "regular"
     when = f"{clubtime.fmt_time(start)} on {day:%a %b} {day.day}"
     out = {L: courts_free(avail, day, now, start, L, machine) for L in lengths}
     named = [c for c in courts if c != "any"]
@@ -452,6 +455,49 @@ async def court_check_on(site: ClubSite, day, start: int, lengths: list[int], co
             say(f"For {L} minutes: court{'s' if len(out[L]) > 1 else ''} {_court_list(out[L])}.")
     say("Courts can still be taken (or freed) before the club opens booking for that time.")
     return {"open": out}
+
+
+# ---------------------------------------------------------------- reservations
+
+def reservation_view(r: dict, now: datetime) -> dict:
+    """A reservation from the report, for the page: its date (ISO), what it is, and
+    whether cancelling costs a fee (less than 24 hours to go) or it has started."""
+    d = datetime.strptime(r["date"], "%m/%d/%Y").date()
+    start = clubtime.slot_start(d, r["start"])
+    left = start - now
+    machine = site_mod.MACHINES.get(r.get("machine") or "", {}).get("label")
+    svc = re.sub(r"^[\d.]+\s*", "", r.get("service") or "").strip()
+    what = machine[0].upper() + machine[1:] if machine else (svc or "Court")
+    return {**r, "day": d.isoformat(), "what": what, "span": span(r["start"], r["end"] - r["start"]),
+            "started": left.total_seconds() <= 0, "fee": 0 < left.total_seconds() < 24 * 3600}
+
+
+async def reservations_on(site: ClubSite, frm, to, family: bool, say: Say) -> dict:
+    """The login's reservations from `frm` to `to` (dates), read-only."""
+    say("Reading your reservations…")
+    a, z = frm.strftime("%m/%d/%Y"), to.strftime("%m/%d/%Y")
+    rows = await site.reservations(a, z, False)
+    mine = {r["guid"] for r in rows}
+    if family:  # the report doesn't say whose; the ones not in your own list are family members'
+        rows = await site.reservations(a, z, True)
+    now = clubtime.now_central()
+    return {"from": frm.isoformat(), "to": to.isoformat(), "family": family,
+            "items": [{**reservation_view(r, now), "mine": r["guid"] in mine} for r in rows], "read_at": read_at(now)}
+
+
+async def cancel_on(site: ClubSite, r: dict, say: Say) -> dict:
+    """Cancel one reservation the person chose in the app, then read it back."""
+    when = f"{datetime.strptime(r['date'], '%m/%d/%Y'):%a %b} {int(r['date'].split('/')[1])}, {span(r['start'], r['end'] - r['start'])}"
+    where = f" on court {r['court']}" if r.get("court") else ""
+    say(f"Cancelling {when}{where}…")
+    note = await site.cancel_reservation(r["guid"], r)
+    msg = f"Cancelled {when}{where}."
+    results.record("cancel", r.get("what") or "Reservation", "cancelled", msg)
+    notify.toast("Reservation cancelled", msg)
+    say(msg)
+    if note:
+        say(f"The club site said: {note}")
+    return {"cancelled": r["guid"]}
 
 
 async def calendar_on(site: ClubSite, day, say: Say) -> dict:

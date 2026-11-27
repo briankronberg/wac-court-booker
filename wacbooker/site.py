@@ -59,6 +59,7 @@ SERVICES = {
 RESOURCE_TO_COURT = {"1": 2, "92": 3, "93": 4, "94": 5, "95": 6, "96": 8, "97": 9, "98": 10}
 COURT_TO_RESOURCE = {c: r for r, c in RESOURCE_TO_COURT.items()}
 COURT_WORDS = {10: "ten"}
+PROVIDER_TO_MACHINE = {"442": "genie", "121": "regular"}
 
 # The court sheet itself is built in the browser from the club's JSON web service
 # (Library/OlsService.asmx). Reading it directly takes one call per day instead of
@@ -70,14 +71,17 @@ FIRST_START, LAST_END = 5 * 60, 22 * 60  # the club's tennis hours
 
 # Ball machines are "providers" on their own services, and only go on some courts.
 # Prime Time has its own services, like singles.
+# Each machine: (service name, guid, numeric id) for regular hours, then Prime Time.
 MACHINES = {
-    "genie": {"label": "Genie ball machine", "short": "Genie", "provider": "442",
-              "services": [("3.01 Genie Ball Machine", "8f3e617f-fe3a-496b-8203-75c5dc6b4c93"),
-                           ("3.22 Primetime Genie Ball Machine", "cad5296f-bcf2-415b-98b7-c8d4cc025f97")]},
-    "regular": {"label": "regular ball machine", "short": "Regular", "provider": "121",
-                "services": [("3 Ball Machine", "1b21354d-1408-49e1-9afa-3b91d7bdab8b"),
-                             ("3.2 Primetime Ball Machine", "0914820e-799e-43f2-a07b-4310676ff317")]},
+    "genie": {"label": "Genie ball machine", "short": "Genie", "provider": "442", "provider_name": "Genie M.",
+              "services": [("3.01 Genie Ball Machine", "8f3e617f-fe3a-496b-8203-75c5dc6b4c93", 1064),
+                           ("3.22 Primetime Genie Ball Machine", "cad5296f-bcf2-415b-98b7-c8d4cc025f97", 1065)]},
+    "regular": {"label": "regular ball machine", "short": "Regular", "provider": "121", "provider_name": "Ball M.",
+                "services": [("3 Ball Machine", "1b21354d-1408-49e1-9afa-3b91d7bdab8b", 113),
+                             ("3.2 Primetime Ball Machine", "0914820e-799e-43f2-a07b-4310676ff317", 1022)]},
 }
+RESOURCE_NAMES = {c: f"Tennis court {COURT_WORDS.get(c, c)}" for c in RESOURCE_TO_COURT.values()}
+FAMILY_URL = BASE + "/Members/Scheduler/AddFamilyMembersScheduler.aspx?showOfflineMessage=true"
 MACHINE_COURTS = (2, 3, 8, 9, 10)
 
 JS_API = r"""async ([url, body]) => {
@@ -100,6 +104,15 @@ def minutes(avail: list[dict] | None) -> list[bool]:
 def both(*days: list[bool]) -> list[bool]:
     """Free only where every day says free (as the club page combines them)."""
     return [all(d[i] for d in days) for i in range(DAY_MINUTES)]
+
+
+def machine_service(key: str, date: str, start: int, length: int) -> tuple:
+    """The machine's service for this slot: its Prime Time one when the slot is in Prime Time."""
+    m, d, y = (int(x) for x in date.split("/"))
+    from datetime import date as _date
+    pieces = clubtime.split_prime(_date(y, m, d).weekday(), start, length)
+    prime = len(pieces) == 1 and pieces[0].prime
+    return MACHINES[key]["services"][1 if prime else 0]
 
 
 def free_for(day: list[bool], start: int, length: int) -> bool:
@@ -221,6 +234,55 @@ JS_PAGE_MESSAGE = r"""() => { const out = [];
 
 JS_REPORT_ROWS = r"""() => Array.from(document.querySelectorAll('a[id$=hlkScheduleName]')).map(a => {
   const tr = a.closest('tr'); return tr ? tr.innerText.replace(/\s+/g, ' ').trim() : ''; })"""
+
+# The reservation report, run for a date range (family members included when asked).
+# The report reloads in place (an ASP.NET UpdatePanel), so the page's own request
+# manager says when it's done; a full reload changes performance.timeOrigin instead.
+JS_REPORT_RUN = r"""([f, t, fam]) => {
+  const a = document.querySelector('#ctl00_pageContentHolder_ctrlFromDate_txtDate');
+  const b = document.querySelector('#ctl00_pageContentHolder_ctrlToDate_txtDate');
+  const go = document.querySelector('#ctl00_pageContentHolder_btnShowReport');
+  if (!a || !b || !go) return null;
+  for (const [el, v] of [[a, f], [b, t]]) { el.value = v;
+    el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); }
+  const sub = document.querySelector('select[id$="ddlIncludeSubMembers"]');
+  if (sub) { sub.value = fam ? 'Yes' : 'No'; sub.dispatchEvent(new Event('change', {bubbles: true})); }
+  const mod = document.querySelector('select[id$="lstModule"]');
+  if (mod && Array.from(mod.options).some(o => o.value === 'SCH_Scheduler')) {
+    mod.value = 'SCH_Scheduler'; mod.dispatchEvent(new Event('change', {bubbles: true})); }
+  window.__wacDone = false;
+  try { Sys.WebForms.PageRequestManager.getInstance().add_endRequest(() => { window.__wacDone = true; }); } catch (e) {}
+  const origin = performance.timeOrigin;
+  go.click(); return origin; }"""
+
+JS_REPORT_TABLE = r"""() => Array.from(document.querySelectorAll('a[id$=hlkScheduleName]')).map(a => {
+  const tr = a.closest('tr');
+  return {href: a.getAttribute('href') || '', cells: tr ? Array.from(tr.children).map(td => td.innerText.replace(/\s+/g, ' ').trim()) : []}; })"""
+
+REPORT_DATE_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})\s*;\s*(\d{1,2}:\d{2}\s*[AP]M)\s*to\s*(\d{1,2}:\d{2}\s*[AP]M)", re.I)
+DETAIL_URL = BASE + "/Members/Scheduler/CurrentScheduleDetail.aspx?ScheduleGuid={guid}&sourcePage=ReservationReport"
+
+
+def parse_report(rows: list[dict]) -> list[dict]:
+    """Reservation report rows: [Schedule, Club, Date, Providers, Resources] plus the
+    detail link. Returns {guid, service, date (m/d/Y), start, end, court, machine}."""
+    out, seen = [], set()
+    for r in rows or []:
+        cells = r.get("cells") or []
+        m = re.search(r"ScheduleGuid=([0-9a-f-]{36})", r.get("href") or "", re.I)
+        d = REPORT_DATE_RE.search(" ".join(cells))
+        if not m or not d or m.group(1).lower() in seen:
+            continue
+        seen.add(m.group(1).lower())
+        text = " ".join(cells)
+        cm = re.search(r"Tennis court (\d+|ten)\b", text, re.I)
+        court = (10 if cm.group(1).lower() == "ten" else int(cm.group(1))) if cm else None
+        machine = "genie" if re.search(r"genie", text, re.I) else ("regular" if re.search(r"ball m", text, re.I) else None)
+        out.append({"guid": m.group(1).lower(), "service": cells[0] if cells else "", "date": d.group(1),
+                    "start": clubtime.parse_time(d.group(2)), "end": clubtime.parse_time(d.group(3)),
+                    "court": court, "machine": machine})
+    return sorted(out, key=lambda x: (datetime.strptime(x["date"], "%m/%d/%Y"), x["start"]))
+
 
 WELCOME_RE = re.compile(r"Welcome,\s*(.+?)\s*\(\s*([A-Za-z0-9-]+)\s*\)")
 
@@ -520,6 +582,8 @@ class ClubSite:
         return out
 
     async def find_open(self, date: str, start: int, lengths: list[int], play: str) -> dict[int, dict[int, Slot]]:
+        if play.startswith("machine"):
+            return await self.find_machine(date, start, lengths, play.partition(":")[2] or "either")
         result: dict[int, dict[int, Slot]] = {}
         for length in lengths:
             result[length] = {}
@@ -541,10 +605,54 @@ class ClubSite:
                     out.append(Slot(date, s["st"], length, s["court"], s["r"], svc))
         return out
 
+    async def find_machine(self, date: str, start: int, lengths: list[int], which: str) -> dict[int, dict[int, Slot]]:
+        """Ball machine slots from the web service: for each length, each court that takes a
+        machine and is free, with the machine to use (the Genie first for 'either')."""
+        avail = await self.day_availability(date, machines=True)
+        order = ["genie", "regular"] if which == "either" else [which]
+        result: dict[int, dict[int, Slot]] = {}
+        for length in lengths:
+            result[length] = {}
+            for key in order:
+                m = MACHINES[key]
+                if not free_for(avail["machines"].get(key, []), start, length):
+                    continue
+                svc = machine_service(key, date, start, length)
+                for c in MACHINE_COURTS:
+                    if c not in result[length] and free_for(avail["courts"].get(c, []), start, length):
+                        result[length][c] = Slot(date, start, length, c, COURT_TO_RESOURCE[c], svc[1], m["provider"])
+        return result
+
+    async def stage_machine(self, slot: Slot) -> None:
+        """Put a ball machine slot on the participants page, as the club page's Continue
+        does: SetScheduleInformation, then AddFamilyMembersScheduler.aspx."""
+        key = PROVIDER_TO_MACHINE[slot.provider]
+        name, guid, sid = next(s for s in MACHINES[key]["services"] if s[1] == slot.service)
+        info = {"ScheduleDate": slot.date, "Duration": slot.length, "Resource": RESOURCE_NAMES[slot.court],
+                "Provider": MACHINES[key]["provider_name"], "SiteId": SITE_ID, "ProviderId": slot.provider,
+                "ResourceId": slot.resource, "ServiceId": sid, "ServiceName": name, "ServiceUniqueIdentifier": guid}
+        avail = await self.day_availability(slot.date, machines=True)
+        if not (free_for(avail["machines"].get(key, []), slot.start, slot.length)
+                and free_for(avail["courts"].get(slot.court, []), slot.start, slot.length)):
+            raise SiteError(f"{slot.describe()} isn't offered", "taken")
+        await self.api("SetScheduleInformation", {"scheduleInformation": json.dumps(info, separators=(",", ":")),
+                                                  "startTime": str(slot.start)}, strict=True)
+        self.family_url = FAMILY_URL
+        await self.goto(self.family_url, timeout=90)
+        if not await self._family_loaded(slot, 60):
+            self.log("participants page has no booking details yet; reloading it")
+            await self.goto(self.family_url, timeout=90)
+            if not await self._family_loaded(slot, 60):
+                raise SiteError("the participants page never loaded the booking")
+        self.staged = slot
+        self.last_fresh = time.time()
+        self.log(f"staged {slot.describe()}")
+
     # ---------------------------------------------------------------- web service (read-only)
-    async def api(self, method: str, payload: dict, timeout: float = 60):
+    async def api(self, method: str, payload: dict, timeout: float = 60, strict: bool = False):
         """Call the club's scheduler web service with this sign-in. Returns its Value.
-        Signs in again once if the session has run out."""
+        Signs in again once if the session has run out. With strict, a message from the
+        club counts as a refusal (the club page shows it and stops), as for SetScheduleInformation."""
         for attempt in (1, 2):
             if "spectrumng" not in (await self.url()).lower():
                 await self.goto(HOME_URL, timeout=60)
@@ -556,7 +664,7 @@ class ClubSite:
                 except ValueError:
                     d = None
                 if isinstance(d, dict):
-                    if d.get("IsException"):
+                    if d.get("IsException") or (strict and str(d.get("Message") or "").strip()):
                         raise SiteError(f"the club site said: {str(d.get('Message') or 'error')[:160]}")
                     return d.get("Value")
             if attempt == 1 and ("login" in str((r or {}).get("url", "")).lower() or "<html" in text[:300].lower()):
@@ -590,7 +698,7 @@ class ClubSite:
                 "GetSchedulerProviderAvailability", {"siteId": SITE_ID, "providerIds": pids, "selectedDate": date}) or []}
             for key, m in MACHINES.items():
                 offered = [False] * DAY_MINUTES
-                for _, g in m["services"]:
+                for _, g, _ in m["services"]:
                     s = minutes(await self.api("GetServiceAvailability", {"serviceUniqueId": g, "selectedDate": date}))
                     offered = [a or b for a, b in zip(offered, s)]
                 out["machines"][key] = both(prov.get(m["provider"], [False] * DAY_MINUTES), offered, site_day)
@@ -601,6 +709,11 @@ class ClubSite:
                 f'[r="{slot.resource}"][d="{slot.date}"]')
 
     async def slot_still_open(self, slot: Slot) -> bool | None:
+        if slot.provider:
+            avail = await self.day_availability(slot.date, machines=True)
+            key = PROVIDER_TO_MACHINE[slot.provider]
+            return (free_for(avail["machines"].get(key, []), slot.start, slot.length)
+                    and free_for(avail["courts"].get(slot.court, []), slot.start, slot.length))
         shown = await self.load_grid(slot.service, slot.date, slot.length, slot.start)
         if any(s["st"] == slot.start and s["et"] == slot.end and s["court"] == slot.court for s in shown):
             return True
@@ -623,6 +736,8 @@ class ClubSite:
                     return
             except SiteError:
                 pass
+        if slot.provider:
+            return await self.stage_machine(slot)
         shown = await self.load_grid(slot.service, slot.date, slot.length, slot.start)
         if not shown:
             shown = await self.load_grid(slot.service, slot.date, slot.length, slot.start)
@@ -841,6 +956,55 @@ class ClubSite:
                 if require_rows:
                     raise SiteError("the reservation report stayed empty")
                 return []
+
+    async def reservations(self, frm: str, to: str, family: bool = False) -> list[dict]:
+        """Every reservation from `frm` to `to` (m/d/Y), from the Reservation Report."""
+        await self.goto(REPORT_URL, timeout=90)
+        origin = await self.js(JS_REPORT_RUN, [frm, to, bool(family)])
+        if origin is None:
+            raise SiteError("the reservation report page didn't show its date boxes")
+        end = time.time() + 60
+        while time.time() < end:
+            await asyncio.sleep(0.5)
+            try:
+                st = await self.page.evaluate("() => [performance.timeOrigin, document.readyState, window.__wacDone === true]")
+            except Exception:  # noqa: BLE001 -- mid-navigation
+                continue
+            if st[2] or (st[0] != origin and st[1] == "complete"):
+                break
+        else:
+            raise SiteError("the reservation report didn't finish loading")
+        await asyncio.sleep(0.3)
+        return parse_report(await self.js(JS_REPORT_TABLE) or [])
+
+    async def cancel_reservation(self, guid: str, expect: dict) -> str:
+        """Cancel one reservation by its id, after checking its detail page shows the
+        expected date and time. Returns the club's message, if it shows one."""
+        if not re.fullmatch(r"[0-9a-f-]{36}", guid or ""):
+            raise SiteError("that reservation id doesn't look right")
+        await self.goto(DETAIL_URL.format(guid=guid), timeout=90)
+        body = (await self.body(4000)).replace("\xa0", " ")
+        when = f"{expect['date']};{clubtime.fmt_time(expect['start'])} to {clubtime.fmt_time(expect['end'])}"
+        if when.replace(" ", "") not in body.replace(" ", ""):
+            raise SiteError("the reservation's page doesn't match it any more; refresh the list")
+        if not await self.wait_for("!!document.querySelector('#ctl00_pageContentHolder_btnCancelSchedule')", 30, 0.5):
+            raise SiteError("the reservation has no Cancel button")
+        await self.js("() => { document.querySelector('#ctl00_pageContentHolder_btnCancelSchedule').click(); return 1; }")
+        await asyncio.sleep(1.5)
+        note = await self.wait_for(
+            "() => { const b = document.querySelector('#ctl00_pageContentHolder_ctrlPopup_btnYes');"
+            " if (!b || !b.offsetParent || getComputedStyle(b).visibility === 'hidden') return null;"
+            " const box = b.closest('table') || b.parentElement; const t = (box && box.innerText || '').replace(/\\s+/g, ' ').trim();"
+            " b.click(); return t || 'yes'; }", 20, 0.5)
+        if not note:
+            raise SiteError("the club's 'are you sure' box didn't appear")
+        end = time.time() + 60
+        while time.time() < end:
+            if "CANCELED" in (await self.url()).upper():
+                self.log(f"cancelled the reservation on {expect['date']} at {clubtime.fmt_time(expect['start'])}")
+                return "" if note == "yes" else str(note)[:200]
+            await asyncio.sleep(1)
+        raise SiteError("the club site didn't confirm the cancellation")
 
     async def reservation_exists(self, slot: Slot) -> bool | None:
         try:

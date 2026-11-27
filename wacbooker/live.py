@@ -33,17 +33,19 @@ class Live:
         self.loop.run_forever()
 
     def run(self, cfg: Config, login: Login, fn: Callable[..., Awaitable], say: Callable[[str], None],
-            timeout: float = 600):
-        """Run `fn(site)` with a signed-in session for `login`; blocks this thread."""
+            timeout: float = 600, retry: bool = True):
+        """Run `fn(site)` with a signed-in session for `login`; blocks this thread. A read
+        that fails is tried once more on a new session; anything that changes something
+        on the club site (retry=False) is not."""
         while self._lock is None:
             time.sleep(0.01)
-        fut = asyncio.run_coroutine_threadsafe(self._use(cfg, login, fn, say), self.loop)
+        fut = asyncio.run_coroutine_threadsafe(self._use(cfg, login, fn, say, retry), self.loop)
         return fut.result(timeout)
 
-    async def _use(self, cfg: Config, login: Login, fn, say):
+    async def _use(self, cfg: Config, login: Login, fn, say, retry: bool = True):
         from . import runner
         async with self._lock:
-            for attempt in (1, 2):
+            for attempt in ((1, 2) if retry else (2,)):
                 site = await self._session(cfg, login, say, runner)
                 try:
                     out = await fn(site)

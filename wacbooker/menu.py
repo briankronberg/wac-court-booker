@@ -45,7 +45,8 @@ def booking_lines(b: Booking, now: datetime, task: dict | None) -> list[str]:
     span = f"{a[:-3]} to {z}" if a[-2:] == z[-2:] else f"{a} to {z}"
     when = f"Every {clubtime.DAYS[b.day]}" if b.day is not None else f"Once, {_md(b.date)}"
     lines = [f"{b.name}{'' if b.active else '  (PAUSED)'}",
-             f"  {when}, {span}, {b.play} with {', '.join(b.partners)}"
+             f"  {when}, {span}, {b.what.lower() if b.play != 'machine' else b.what}"
+             f"{(' with ' + ', '.join(b.partners)) if b.partners else ''}"
              + (" (or shorter if no court has that long)" if b.shorter_ok else "")]
     named = [str(c) for c in b.courts if c != "any"]
     courts = ", then ".join(named + (["any"] if "any" in b.courts else [])) or "any"

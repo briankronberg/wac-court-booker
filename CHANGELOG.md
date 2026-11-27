@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- **Ball machines.** A booking can now be a ball machine instead of singles or doubles: the **Genie** (works with its phone app), the **regular** one, or **either** (Genie first). The app books the machine and a court that takes it (2, 3, 8, 9 or 10) together, at the time the booking opens; Prime Time ball machines book 24 hours ahead, like singles. **See Available Courts** shows each machine's free times and **Validate booking** checks the machine too.
+- **My reservations.** A new page lists what's booked on the club site for the next 30 days (or dates you pick), optionally with your family members' reservations, and cancels one after asking. It warns when a cancel is inside 24 hours, when the club charges a fee. Cancels show in **What happened** and as a notification.
+- A ball machine booking goes straight through the club's own booking request, instead of clicking through the club's machine, then time, then court pages.
+
 ## 0.3.2
 
 - **Fix: the calendar showed the wrong day.** Opening it again for another date reused the window and kept the old day. It now follows the date you pick, and also has its own date box.
