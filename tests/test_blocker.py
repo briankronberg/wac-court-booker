@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 import wacbooker.creds as creds
 from wacbooker import clubtime, config, runner, scheduler
 from fakes import FakeClock, FakeSite
+from wacbooker.engine import SiteError
 
 
 def booking(play="singles", day="Friday", time="3:00 PM", length=90, **kw):
@@ -135,6 +136,14 @@ def test_plan_blocker_none_when_nothing_is_free():
     assert runner.plan_blocker(_avail({}), day, now, 5 * 60, [5, 4, 3]) is None
 
 
+def test_plan_blocker_only_guards_a_court_free_for_play():
+    day = date(2026, 12, 18)
+    now = clubtime.now_central()
+    main = 18 * 60
+    # court 5 is taken when play starts: guarding it would protect nothing, so court 4
+    assert runner.plan_blocker(_avail({5: [(main, 30)]}), day, now, main, [5, 4, 3], 60) == (4, main - 60, 60)
+
+
 # ------------------------------------------------------------ runner
 
 
@@ -213,6 +222,20 @@ def test_guard_run_without_a_free_slot(tmp_path, monkeypatch):
     assert "guard" in toasts[-1][1].lower()
 
 
+def test_guard_run_skips_when_the_day_already_has_a_reservation(tmp_path, monkeypatch):
+    # guard + the booking itself would be 3 with the one already there: the club allows 2
+    _guard_booking(monkeypatch, tmp_path)
+    day = date(2026, 12, 18)
+    W = clubtime.window_open(clubtime.slot_start(day, 17 * 60))
+    site, toasts = _run_setup(monkeypatch, W, open_courts={60: [5, 4, 3], 30: [5, 4, 3]},
+                              mine=[{"date": "12/18/2026", "start": 8 * 60, "end": 9 * 60, "court": 2}])
+    monkeypatch.setattr(clubtime, "now_central", lambda: W - timedelta(minutes=75))
+    assert runner.run_booking("b", "blocker") == 1
+    assert site.booked == []
+    msg = toasts[-1][1].lower()
+    assert "guard" in msg and "2" in msg
+
+
 def test_guard_is_cancelled_when_the_main_part_books(tmp_path, monkeypatch):
     import wacbooker.creds as creds
     _guard_booking(monkeypatch, tmp_path)
@@ -271,6 +294,27 @@ def test_guard_stays_when_the_main_result_is_unknown(tmp_path, monkeypatch):
     assert "guard" in toasts[-1][1].lower() and "club site" in toasts[-1][1]
 
 
+def test_guard_cancel_failure_says_to_cancel_it_on_the_club_site(tmp_path, monkeypatch):
+    _guard_booking(monkeypatch, tmp_path)
+    day = date(2026, 12, 18)
+    W_blk = clubtime.window_open(clubtime.slot_start(day, 17 * 60))
+    W_main = clubtime.window_open(clubtime.slot_start(day, 18 * 60))
+
+    site, _ = _run_setup(monkeypatch, W_blk, open_courts={60: [5, 4, 3], 30: [5, 4, 3]})
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_blk - timedelta(minutes=75))
+    assert runner.run_booking("b", "blocker") == 0
+
+    site2, toasts2 = _run_setup(monkeypatch, W_main, open_courts={60: [5, 4, 3], 30: [5, 4, 3]})
+
+    async def bad_cancel(slot, tries=3):
+        raise SiteError("cancel: row not found")
+    site2.cancel = bad_cancel
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_main - timedelta(minutes=75))
+    assert runner.run_booking("b") == 0  # the booking itself went through
+    msg = toasts2[-1][1]
+    assert "guard" in msg.lower() and "club site" in msg
+
+
 def test_group_guard_books_per_login_and_the_main_run_cancels_each(tmp_path, monkeypatch):
     monkeypatch.setenv("WACB_HOME", str(tmp_path))
     raw = {"name": "b", "login": "me", "play": "singles", "partners": ["Pat Lee"], "day": "Friday",
@@ -322,13 +366,17 @@ def test_group_guard_books_per_login_and_the_main_run_cancels_each(tmp_path, mon
         assert [(x.start, x.length, x.court) for x in s.cancelled] == [(17 * 60, g.length, g.court)]
 
 
-def test_book_now_books_the_guard_and_cancels_it(tmp_path, monkeypatch):
+def test_book_now_skips_the_guard(tmp_path, monkeypatch):
+    # Ruling: Book Now books only the play itself. Once its window is open, every slot that
+    # starts earlier is open too, so a guard booked seconds before would protect nothing.
     monkeypatch.setenv("WACB_HOME", str(tmp_path))
-    d = (clubtime.now_central() + timedelta(days=9)).date()
-    # Friday: 6:00 PM is outside Prime Time (Mon-Thu 5:00-8:00 PM is prime, and a
-    # blocker can't protect a Prime Time start)
-    while d.weekday() != 4:
+    now = clubtime.now_central()
+    d = now.date()
+    # the first Friday whose 6:00 PM is more than an hour away: its window (169 h ahead) is
+    # open, and Friday 6:00 PM is outside Prime Time
+    while d.weekday() != 4 or clubtime.slot_start(d, 18 * 60) <= now + timedelta(hours=1):
         d += timedelta(days=1)
+    assert clubtime.window_open(clubtime.slot_start(d, 18 * 60)) <= now
     errs = []
     b = config.parse_booking({"name": "n", "login": "me", "play": "singles", "partners": ["Pat Lee"],
                               "date": d.isoformat(), "time": "6:00 PM", "length": 60,
@@ -348,5 +396,5 @@ def test_book_now_books_the_guard_and_cancels_it(tmp_path, monkeypatch):
     assert lg is not None
     out = asyncio.run(runner.book_now(cfg, b, lg, lambda s: None, clock))
     assert out == "booked"
-    assert [(s.start, s.length, s.court) for s in site.booked] == [(17 * 60, 60, 5), (18 * 60, 60, 5)]
-    assert [(s.start, s.length, s.court) for s in site.cancelled] == [(17 * 60, 60, 5)]
+    assert [(s.start, s.length, s.court) for s in site.booked] == [(18 * 60, 60, 5)]
+    assert site.cancelled == []

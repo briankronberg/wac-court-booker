@@ -1033,8 +1033,8 @@ class ClubSite:
         return report_has(rows, slot)
 
     async def cancel(self, slot: Slot, tries: int = 3) -> None:
-        """Cancel one reservation via the Reservation Report. Only the test
-        booking ever calls this."""
+        """Cancel one reservation via the Reservation Report: the test booking, and a
+        booking's guard slot once the booking itself is settled."""
         want_time = f"{clubtime.fmt_time(slot.start)} to {clubtime.fmt_time(slot.end)}"
         last = ""
         for n in range(1, tries + 1):
