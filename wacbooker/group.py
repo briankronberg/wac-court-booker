@@ -58,7 +58,7 @@ class Group:
             # no one else is here (or no seat next to them): the best block of k in a row,
             # k = the members still without a court (this one included); the k best if the
             # sheet has no such block
-            k = self.size - len(self.want)
+            k = self.size - len([i for i in self.want if i != idx])  # members without a court, this one included
             blocks = [run[i:i + k] for run in self._runs(sorted(avail))
                       for i in range(len(run) - k + 1)]
             best = min(blocks, key=lambda blk: sum(rank[c] for c in blk), default=None)
