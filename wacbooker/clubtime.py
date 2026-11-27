@@ -116,6 +116,25 @@ def fmt_when(dt: datetime) -> str:
     return f"{c:%a} {c.month}/{c.day} {fmt_time(c.hour * 60 + c.minute)}"
 
 
+def date_forms(mdy: str) -> list[str]:
+    """'12/04/2026' -> ['12/04/2026', '12/4/2026']: how the club may write a date
+    (its reservation report drops leading zeros). Unparseable text comes back as is."""
+    try:
+        d = datetime.strptime(mdy.strip(), "%m/%d/%Y")
+    except (AttributeError, ValueError):
+        return [mdy]
+    out = [f"{d:%m/%d/%Y}", f"{d.month}/{d.day}/{d.year}"]
+    return list(dict.fromkeys(out))
+
+
+def same_day(a: str, b: str) -> bool:
+    """Do two m/d/Y dates name the same day, with or without leading zeros?"""
+    try:
+        return datetime.strptime(a.strip(), "%m/%d/%Y") == datetime.strptime(b.strip(), "%m/%d/%Y")
+    except (AttributeError, ValueError):
+        return False
+
+
 @dataclass(frozen=True)
 class Occurrence:
     """One concrete play date of a booking."""

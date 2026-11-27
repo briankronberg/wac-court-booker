@@ -60,3 +60,13 @@ def test_due_occurrence_for_a_run():
 def test_run_time_is_75_minutes_before_window():
     occ = ct.occurrences(1, None, 18 * 60, ct.slot_start(date(2026, 12, 1), 0))[0]
     assert occ.window - occ.run_at == timedelta(minutes=75)
+
+
+def test_date_forms_and_same_day():
+    from wacbooker import clubtime
+    assert clubtime.date_forms("12/04/2026") == ["12/04/2026", "12/4/2026"]
+    assert clubtime.date_forms("01/05/2027") == ["01/05/2027", "1/5/2027"]
+    assert clubtime.date_forms("11/30/2026") == ["11/30/2026"]
+    assert clubtime.same_day("12/4/2026", "12/04/2026")
+    assert not clubtime.same_day("12/4/2026", "12/14/2026")
+    assert not clubtime.same_day("", "12/04/2026")

@@ -103,3 +103,20 @@ def test_cancel_refuses_a_bad_id():
         assert "doesn't look right" in str(e)
     else:
         raise AssertionError("accepted a bad id")
+
+
+def test_report_has_matches_the_reports_unpadded_date():
+    from wacbooker.engine import Slot
+    from wacbooker.site import report_has
+    rows = ["2 Singles Wisconsin Athletic Club, LLC 12/4/2026; 1:30 PM to 2:30 PM Tennis court 5"]
+    assert report_has(rows, Slot("12/04/2026", 13 * 60 + 30, 60, 5))
+    assert not report_has(rows, Slot("12/04/2026", 13 * 60 + 30, 60, 4))
+    assert not report_has(rows, Slot("12/14/2026", 13 * 60 + 30, 60, 5))
+
+
+def test_report_has_does_not_match_a_longer_date():
+    from wacbooker.engine import Slot
+    from wacbooker.site import report_has
+    rows = ["2 Singles Wisconsin Athletic Club, LLC 11/5/2027; 1:30 PM to 2:30 PM Tennis court 5"]
+    assert not report_has(rows, Slot("01/05/2027", 13 * 60 + 30, 60, 5))
+    assert report_has(rows, Slot("11/05/2027", 13 * 60 + 30, 60, 5))

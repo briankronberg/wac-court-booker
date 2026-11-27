@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- **Fix:** on dates with a one-digit month or day (like 12/4), the app didn't recognise your own reservations in the club's list, which writes such dates without a leading zero. The guard court wasn't cancelled after your booking, the 2-a-day check missed reservations you already had, and the check after an unanswered press could miss a booking. All three now read the club's dates correctly.
+
 ## 0.6.1
 
 - **Fix:** a booking's second session ("Play again right after") and its guard court ("Protect the start time") never booked: their scheduled runs stopped straight away. Updating is enough: the scheduled tasks stay as they are.

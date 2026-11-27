@@ -331,13 +331,19 @@ def rows_enabled(m: dict) -> bool:
     return all(r and r["cb"] and not r["cb"]["dis"] for r in m["partners"].values())
 
 
+def has_date(text: str, mdy: str) -> bool:
+    """Does `text` contain the date (with or without leading zeros) standing on its own,
+    not as the tail of a longer date ('1/5/2027' is not in '11/5/2027')?"""
+    return any(re.search(r"(?<![\d/])" + re.escape(f) + r"(?!\d)", text) for f in clubtime.date_forms(mdy))
+
+
 def report_has(rows: list[str], slot: Slot) -> bool:
     want_time = f"{clubtime.fmt_time(slot.start)} to {clubtime.fmt_time(slot.end)}"
     labels = {f"tennis court {slot.court}", f"tennis court {court_label(slot.court)}"}
     for r in rows:
         r = (r or "").replace("\xa0", " ")
         low = r.lower()
-        if slot.date in r and want_time in r and any(re.search(re.escape(x) + r"\b", low) for x in labels):
+        if has_date(r, slot.date) and want_time in r and any(re.search(re.escape(x) + r"\b", low) for x in labels):
             return True
     return False
 
@@ -1059,13 +1065,13 @@ class ClubSite:
         for n in range(1, tries + 1):
             try:
                 await self.reservation_rows(slot.date)
-                r = await self.js(r"""([date, time, labels]) => {
+                r = await self.js(r"""([dates, time, labels]) => {
                     for (const a of document.querySelectorAll('a[id$=hlkScheduleName]')) {
                       const tr = a.closest('tr'); const t = (tr ? tr.innerText : '').replace(/\s+/g, ' ');
-                      if (t.indexOf(date) >= 0 && t.indexOf(time) >= 0 &&
+                      if (dates.some(d => new RegExp('(^|[^\\d/])' + d.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') + '(?!\\d)').test(t)) && t.indexOf(time) >= 0 &&
                           labels.some(l => new RegExp('Tennis court ' + l + '\\b', 'i').test(t))) { a.click(); return 'ok'; }
                     } return 'row not found'; }""",
-                                  [slot.date, want_time, [str(slot.court), court_label(slot.court)]])
+                                  [clubtime.date_forms(slot.date), want_time, [str(slot.court), court_label(slot.court)]])
                 if r != "ok":
                     raise SiteError(f"cancel: {r}")
                 if not await self.wait_for("!!document.querySelector('#ctl00_pageContentHolder_btnCancelSchedule')", 60, 1):
