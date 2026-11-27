@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from wacbooker import clubtime, config, creds, scheduler, web
+from wacbooker import clubtime, config, creds, mail, scheduler, web
 
 
 @pytest.fixture
@@ -333,3 +333,59 @@ def test_desktop_shortcut_points_at_the_window(srv, monkeypatch, tmp_path):
     assert seen["WACB_TARGET"] == str(exe) and seen["WACB_LNK"] == str(link)
     assert (tmp_path / "desktop-shortcut.txt").read_text().strip() == "Yes"
     assert call(srv, "/api/state")[1]["settings"]["desktop_shortcut"] is True
+
+
+def fake_mail_vault(monkeypatch):
+    vault = {}
+    monkeypatch.setattr(mail, "set_password", lambda a, p: vault.__setitem__(a.lower(), p))
+    monkeypatch.setattr(mail, "has_password", lambda a: bool(a) and a.lower() in vault)
+    monkeypatch.setattr(mail, "delete_password", lambda a: vault.pop(a.lower(), None))
+    return vault
+
+
+def test_email_settings_save_and_show(srv, monkeypatch, tmp_path):
+    fake_mail_vault(monkeypatch)
+    _, r = call(srv, "/api/settings", {"email_to": "me@example.com", "email_from": ""})
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    s = state["settings"]
+    assert s["email_to"] == "me@example.com" and s["email_from"] == ""
+    assert s["email_password_saved"] is False
+    _, bad = call(srv, "/api/settings", {"email_to": "not an address"})
+    assert not bad["ok"] and "email" in " ".join(bad["errors"]).lower()
+
+
+def test_email_password_goes_to_the_vault_only(srv, monkeypatch, tmp_path):
+    vault = fake_mail_vault(monkeypatch)
+    call(srv, "/api/settings", {"email_to": "me@example.com"})
+    _, r = call(srv, "/api/email-password", {"password": "app-password-123"})
+    assert r["ok"], r
+    assert vault == {"me@example.com": "app-password-123"}
+    assert "app-password-123" not in json.dumps(r)
+    assert "app-password-123" not in (tmp_path / "bookings.yaml").read_text(encoding="utf-8")
+    _, state = call(srv, "/api/state")
+    assert state["settings"]["email_password_saved"] is True
+    _, r = call(srv, "/api/email-password", {"forget": True})
+    assert r["ok"] and vault == {}
+
+
+def test_email_password_needs_an_address_first(srv, monkeypatch):
+    fake_mail_vault(monkeypatch)
+    _, r = call(srv, "/api/email-password", {"password": "app-password-123"})
+    assert not r["ok"] and "address" in " ".join(r["errors"]).lower()
+
+
+def test_test_email_job_needs_no_club_login(srv):
+    _, r = call(srv, "/api/job", {"kind": "test-email"})
+    assert r["ok"], r
+
+
+def test_send_test_email_reports_the_outcome(monkeypatch):
+    sent = []
+    monkeypatch.setattr(mail, "send", lambda cfg, subject, summary, details=(): sent.append(subject) or (True, "sent to me@example.com"))
+    lines = []
+    assert web.send_test_email(config.Config(email_to="me@example.com"), lines.append) is True
+    assert sent == ["Test"] and "sent to me@example.com" in lines[-1]
+    monkeypatch.setattr(mail, "send", lambda *a, **k: (False, "no saved email password for me@example.com"))
+    assert web.send_test_email(config.Config(email_to="me@example.com"), lines.append) is False
+    assert "no saved email password" in lines[-1]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from . import APP_NAME, __version__, clock, clubtime, config, creds, live, notify, paths, results, runner, scheduler
+from . import APP_NAME, __version__, clock, clubtime, config, creds, live, mail, notify, paths, results, runner, scheduler
 from . import site as site_mod
 from .config import Booking, Login
 from .engine import SiteError
@@ -196,6 +197,14 @@ class Job:
                 "done": self.done, "ok": self.ok, "question": self.question, "data": self.data}
 
 
+def send_test_email(cfg: config.Config, say) -> bool:
+    """The Settings page's "Send test email": one short email, and what happened."""
+    ok, why = mail.send(cfg, "Test", "This is a test email from WAC Court Booker. After each booking "
+                                     "run you'll get a short one like it saying how it went.")
+    say(f"Test email {why}." if ok else f"The test email wasn't sent: {why}.")
+    return ok
+
+
 # ---------------------------------------------------------------- the app
 
 class WebApp:
@@ -251,7 +260,9 @@ class WebApp:
             "settings": {"browser": cfg.browser, "show_window": cfg.show_window,
                          "run_signed_out": cfg.run_signed_out, "wake_timers": scheduler.wake_timers_on(),
                          "windows_password_held": bool(self.windows_password),
-                         "desktop_shortcut": desktop_shortcut_path().exists()},
+                         "desktop_shortcut": desktop_shortcut_path().exists(),
+                         "email_to": cfg.email_to, "email_from": cfg.email_from,
+                         "email_password_saved": mail.has_password(mail.sender(cfg))},
             "other_timezone": local.utcoffset() != now.utcoffset(),
             "courts": list(config.COURTS),
             "job": self.job.view() if self.job else None,
@@ -466,6 +477,13 @@ class WebApp:
                 if not body["run_signed_out"]:
                     self.windows_password = None
                 changed.append(f"run while signed out: {'yes' if body['run_signed_out'] else 'no'}")
+            for key in ("email_to", "email_from"):
+                if key in body:
+                    val = str(body[key] or "").strip()
+                    if val and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", val):
+                        raise UserError(f"That isn't an email address: {val}")
+                    config.set_setting(doc, key, val)
+                    changed.append(f"{key.replace('_', ' ')} {val or 'off'}")
             return self._commit(doc, ", ".join(changed) or "settings")
 
     def windows_password_set(self, body: dict) -> dict:
@@ -481,6 +499,24 @@ class WebApp:
             out["ok"] = not out.get("task_errors") and not out.get("task_problem")
             out["signed_out"] = bool(self.windows_password)
             return out
+
+    def email_password_set(self, body: dict) -> dict:
+        """The mail account's app password: straight into Credential Manager, never a file."""
+        pw = str(body.get("password") or "")
+        body["password"] = ""
+        _, cfg = self._load()
+        who = mail.sender(cfg)
+        if body.get("forget"):
+            if who:
+                mail.delete_password(who)
+            return {"ok": True}
+        if not who:
+            raise UserError("Save the email address first.")
+        if not pw:
+            raise UserError("Type the email app password.")
+        mail.set_password(who, pw)
+        del pw
+        return {"ok": True}
 
     def rebuild(self) -> dict:
         with self.lock:
@@ -507,10 +543,11 @@ class WebApp:
                       "dry-run": "Looking at the court sheet", "clock": "Checking the PC clock",
                       "test-booking": "Test booking", "court-check": "Validate booking",
                       "calendar": "Court calendar", "reservations": "My reservations",
-                      "cancel": "Cancel a reservation", "book-now": "Book now"}
+                      "cancel": "Cancel a reservation", "book-now": "Book now",
+                      "test-email": "Sending a test email"}
             if kind not in titles:
                 raise UserError("Unknown check.")
-            if kind != "clock" and not login:
+            if kind not in ("clock", "test-email") and not login:
                 raise UserError("Add your club login first.")
             job = Job(kind, titles[kind])
             work = self._job_work(kind, job, cfg, login, body)
@@ -530,6 +567,8 @@ class WebApp:
 
     def _job_work(self, kind: str, job: Job, cfg: config.Config, login: Login | None, body: dict) -> Callable:
         say = job.say
+        if kind == "test-email":
+            return lambda: send_test_email(cfg, say)
         if kind == "clock":
             def work():
                 ok, msg = clock.report()
@@ -838,6 +877,7 @@ def make_handler(app: WebApp, token: str, port_ref: list[int]):
                 "/api/login/remove": lambda: app.remove_login(body),
                 "/api/settings": lambda: app.settings(body),
                 "/api/windows-password": lambda: app.windows_password_set(body),
+                "/api/email-password": lambda: app.email_password_set(body),
                 "/api/rebuild": app.rebuild,
                 "/api/wake-timers": app.wake_timers,
                 "/api/job": lambda: app.start_job(body),

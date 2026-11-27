@@ -1047,6 +1047,16 @@ function renderSettings(el) {
       <select id="tb-partner" style="max-width:280px" aria-label="Partner"><option value="">Who would you play with?</option>${partnerOpts}</select>
       <button class="btn" id="tb-go" type="button">Make a test booking</button></div>` : `<p class="muted">Add a login first.</p>`}</div>`;
 
+  h += `<div class="card"><h3>Email after each booking</h3>
+    <p class="small muted">A short email after each booking run saying how it went. It's sent from your own mail account: for Gmail, turn on 2-Step Verification, then make an app password (Google Account, Security, App passwords) and paste it here. It goes straight into Windows Credential Manager, never into a file.</p>
+    <div class="row"><input type="email" id="em-to" placeholder="Send to: name@gmail.com" value="${esc(st.email_to || "")}" style="max-width:280px" aria-label="Send to">
+      <input type="email" id="em-from" placeholder="Send from (if different)" value="${esc(st.email_from || "")}" style="max-width:280px" aria-label="Send from">
+      <button class="btn" id="em-save" type="button">Save</button></div>
+    ${st.email_to ? `<div class="row" style="margin-top:8px"><input type="password" id="em-pw" placeholder="${st.email_password_saved ? "App password saved (type to replace)" : "App password"}" style="max-width:280px" aria-label="App password" autocomplete="off">
+      <button class="btn" id="em-pwsave" type="button">Save password</button>
+      <button class="btn" id="em-test" type="button" ${st.email_password_saved ? "" : "disabled"}>Send test email</button>
+      ${st.email_password_saved ? `<button class="linkish" id="em-forget" type="button">Forget the password</button>` : ""}</div>` : ""}</div>`;
+
   h += `<div class="card"><h3>Browser the app uses</h3>
     <div class="choices" style="margin-top:10px">${[["hidden", "Hidden (normal)", "The app's own browser, no window"], ["edge", "Microsoft Edge", "Separate profile"], ["chrome", "Google Chrome", "Separate profile"]]
       .map(([v, a, b]) => `<button type="button" class="choice" data-br="${v}" aria-pressed="${st.browser === v}">${a}<small>${b}</small></button>`).join("")}</div>
@@ -1074,6 +1084,10 @@ function renderSettings(el) {
     }
   }));
   if ($("#wake")) $("#wake").onclick = async () => { const r = await api("/api/wake-timers", {}); toast(r.ok ? "Wake timers are on." : "Not changed: " + r.message, !r.ok); refresh(); };
+  if ($("#em-save")) $("#em-save").onclick = async () => { await afterSave(await api("/api/settings", { email_to: $("#em-to").value.trim(), email_from: $("#em-from").value.trim() }), "Saved."); refresh(); };
+  if ($("#em-pwsave")) $("#em-pwsave").onclick = async () => { const el = $("#em-pw"); const pw = el.value; el.value = ""; if (!pw) return; await afterSave(await api("/api/email-password", { password: pw }), "Password saved."); refresh(); };
+  if ($("#em-forget")) $("#em-forget").onclick = async () => { await afterSave(await api("/api/email-password", { forget: true }), "Forgotten."); refresh(); };
+  if ($("#em-test")) $("#em-test").onclick = () => runJob({ kind: "test-email" });
   $("#so-no").onclick = async () => { if (st.run_signed_out) { await afterSave(await api("/api/settings", { run_signed_out: false }), "Bookings run while you're signed in."); refresh(); } };
   $("#so-yes").onclick = async () => { if (!st.run_signed_out) { await afterSave(await api("/api/settings", { run_signed_out: true }), "Saved."); refresh(); } };
   if ($("#so-pw")) $("#so-pw").onclick = askWindowsPassword;
