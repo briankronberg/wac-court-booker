@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import json
+import logging
 import msvcrt
 import re
 from contextlib import contextmanager
@@ -11,7 +12,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Callable
 
-from . import clock, clubtime, config, creds, notify, paths, results
+from . import clock, clubtime, config, creds, mail, notify, paths, results
 from .config import Booking, Config, Login
 from .engine import CONFIRMED, NOT_READY, UNKNOWN, Engine, RealClock, SiteError, Slot, day_conflict
 from . import site as site_mod
@@ -93,8 +94,47 @@ def main_part_court(name: str, day, login: str, own: str) -> int | None:
     return None
 
 
+def run_and_report(name: str, part: str = "main") -> int:
+    """What the scheduled task runs: the booking run, then (when email is set up) one
+    plain email with what its notifications said, and the engine's timing lines under a
+    details divider. A guard-slot run emails only when its outcome is unknown: otherwise
+    the booking's own run says what happened to the guard slot."""
+    seen: list[tuple[str, str]] = []
+    lines: list[str] = []
+    lg = notify.logger()
+
+    class _Grab(logging.Handler):
+        def emit(self, record):
+            lines.append(record.getMessage())
+    grab = _Grab()
+    lg.addHandler(grab)
+    real = notify.toast
+
+    def tee(title: str, body: str):
+        seen.append((title, body))
+        return real(title, body)
+    notify.toast = tee
+    try:
+        rc = run_booking(name, part)
+    finally:
+        notify.toast = real
+        lg.removeHandler(grab)
+    if not seen or (part == "blocker" and all(t != "Check your bookings" for t, _ in seen)):
+        return rc
+    _, cfg = config.load()
+    if not cfg.ok or not mail.configured(cfg):
+        return rc
+    # Only the engine's timing lines (no names): "[booking] W+44.9s press -> CONFIRMED".
+    details = [x for x in lines if re.search(r"\] W[+-]\d", x)
+               and "signed in as" not in x and "run for" not in x]
+    summary = "\n\n".join(f"{t}\n{b}" for t, b in seen)
+    ok, why = mail.send(cfg, seen[-1][0], summary, details[-60:])
+    lg.info(f"[{name}] email: {why}")
+    return rc
+
+
 def run_booking(name: str, part: str = "main") -> int:
-    label = {"prime": " (Prime Time part)", "next": " (second session)", "blocker": " (guard slot)"}.get(part, "")
+    label ={"prime": " (Prime Time part)", "next": " (second session)", "blocker": " (guard slot)"}.get(part, "")
     log = _log(name + label)
     doc, cfg = config.load()
     if not cfg.ok:
