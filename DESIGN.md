@@ -113,7 +113,20 @@ The club's FAQ: Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:
 - A minute is free when the court, the service and the club all say so (the page ANDs them the same way; today it also blocks times already past). A half hour is **booked** if a member reservation overlaps it, otherwise **blocked** (lesson, league, event or closed).
 - **Validate booking** (next to Save) checks the form's date (a weekly booking: its next date more than a week away), start and lengths; **See Available Courts** opens `/calendar` for the form's date or today. Pressing an open cell there posts `{type: "wacb-pick", date, time, court}` to the main window, which fills the form. A second open of the calendar only changes its hash, so the page reloads on `hashchange`.
 - Both use a warm session (`live.py`): one signed-in browser on its own event-loop thread, kept 10 minutes after its last use, closed when the page server stops. The first look takes a few seconds (sign-in), later ones about one. Scheduled bookings never use it.
-- The booking engine still stages through the court list (it needs the page's slot links), with every court selected first: the list opens with only courts 2-6 selected.
+- The booking engine still stages courts through the court list (it needs the page's slot links), with every court selected first: the list opens with only courts 2-6 selected.
+
+## Ball machines
+
+- Ball machines are "providers" on their own services: `3.01 Genie Ball Machine` (provider 442, "Genie M.") and `3 Ball Machine` (121, "Ball M."), each with a Prime Time service (`3.22`, `3.2`). Their resources are courts 2, 3, 8, 9 and ten. The service setup says `ProviderRequired` and `ResourceRequired`.
+- On the club site you pick a machine's time on a calendar, then a court in a popup. The popup's Continue calls `SetScheduleInformation` with `{ScheduleDate, Duration, Resource, Provider, SiteId, ProviderId, ResourceId, ServiceId, ServiceName, ServiceUniqueIdentifier}` and the start, then opens `AddFamilyMembersScheduler.aspx?showOfflineMessage=true`, the same participants page courts use. `ClubSite.stage_machine` does exactly that, after checking the machine and the court are both free, so the rest of the engine (keep-alive, presses, report check) is unchanged.
+- `play: machine` with `machine: genie | regular | either` in bookings.yaml; no partners; courts limited to 2, 3, 8, 9, 10. `find_open` returns, per length, each free machine court with the machine to use (Genie first for `either`). The service follows Prime Time: a slot inside it uses the Prime Time service, and the booking's lead is 24 hours, split in two parts like singles if it straddles.
+- Not yet tried against a real window: whether the participants page for a machine lets a partner be added (bookings are just you for now).
+
+## My reservations
+
+- The Reservation Report (`ReservationReport.aspx`) run for a date range, with `lstModule` = Scheduler and, for family, `ddlIncludeSubMembers` = Yes. It reloads in an UpdatePanel, so the app waits for the PageRequestManager's `endRequest` (or a full reload). Rows are [Schedule, Club, Date, Providers, Resources] with a link holding the `ScheduleGuid`. The report doesn't say whose a row is, so with family on the app reads it twice and marks the rows missing from your own list as family.
+- Cancel opens `CurrentScheduleDetail.aspx?ScheduleGuid=...`, checks the page still shows the same date and time, presses Cancel Schedule, waits for the confirm box's Yes to be visible and presses it, then waits for the URL to say CANCELED. The page confirms first and warns inside 24 hours (the club's late-cancel fee). Each cancel is recorded in results.jsonl and shown as a notification.
+
 
 ## How a booking runs
 

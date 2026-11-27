@@ -73,16 +73,17 @@ def courts_text(courts: list) -> str:
 
 
 def prime_note(b: Booking) -> dict | None:
-    """How Prime Time changes this booking, in plain words (singles only)."""
+    """How Prime Time changes this booking, in plain words (singles and ball machines)."""
     kind = b.prime_kind
     if kind == "none":
         return None
+    what = "ball machines" if b.play == "machine" else "singles courts"
     if kind == "all":
-        return {"kind": "all", "text": "Prime Time singles: the club opens these courts only 24 hours "
+        return {"kind": "all", "text": f"Prime Time: the club opens {what} only 24 hours "
                                        "ahead, so the app books it then, not a week ahead."}
     main, prime = b.part("main"), b.part("prime")
     return {"kind": "split", "text": (
-        f"{span_text(prime.time, prime.length)} is Prime Time, when the club opens singles courts only "
+        f"{span_text(prime.time, prime.length)} is Prime Time, when the club opens {what} only "
         f"24 hours ahead. So the app books this in two parts: {span_text(main.time, main.length)} a week "
         f"ahead, then {span_text(prime.time, prime.length)} 24 hours ahead, on the same court if it's free. "
         f"Prime Time is often taken by lessons. For the best chance, change the time so the booking is "
@@ -93,12 +94,12 @@ def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict 
     weekly = b.day is not None
     when = f"Every {clubtime.DAYS[b.day]}" if weekly else f"{b.date:%A}, {b.date:%B} {b.date.day}"
     v: dict[str, Any] = {
-        "name": b.name, "login": b.login, "play": b.play, "partners": b.partners, "day": b.day,
+        "name": b.name, "login": b.login, "play": b.play, "machine": b.machine, "partners": b.partners, "day": b.day,
         "date": b.date.isoformat() if b.date else None, "time": b.time, "length": b.length,
         "shorter_ok": b.shorter_ok, "courts": b.courts, "active": b.active,
         "skip": [d.isoformat() for d in b.skip],
         "title": f"{when}, {span_text(b.time, b.length)}",
-        "who": f"{b.play.capitalize()} with {names_text(b.partners)}",
+        "who": b.what + (f" with {names_text(b.partners)}" if b.partners else ""),
         "courts_text": courts_text(b.courts) + (f". Shorter if no court has {b.length} minutes."
                                                 if b.shorter_ok else "."),
         "weekly": weekly,
@@ -301,6 +302,7 @@ class WebApp:
                 raise UserError("Choose a start time.")
             raw: dict[str, Any] = {
                 "name": "x", "login": login, "play": body.get("play"),
+                **({"machine": body.get("machine") or "either"} if body.get("play") == "machine" else {}),
                 "partners": [" ".join(str(p).split()) for p in body.get("partners") or []],
                 "time": clubtime.fmt_time(minutes), "length": body.get("length"),
                 "shorter_ok": bool(body.get("shorter_ok")) and int(body.get("length") or 0) > 30,
@@ -323,8 +325,9 @@ class WebApp:
             if errs:
                 return {"ok": False, "errors": [e.replace("Booking 'x': ", "") for e in errs]}
             others = [x.name for x in cfg.bookings if not old or x.name != old.name]
-            b.name = config.auto_name(b.play, b.partners, b.day, b.date, b.time, others)
-            if old and old.name != config.auto_name(old.play, old.partners, old.day, old.date, old.time, others):
+            b.name = config.auto_name(b.play, b.partners, b.day, b.date, b.time, others, b.machine)
+            if old and old.name != config.auto_name(old.play, old.partners, old.day, old.date, old.time, others,
+                                                    old.machine):
                 b.name = old.name  # a name typed by hand in bookings.yaml stays
             if b.date:
                 w = clubtime.window_open(clubtime.slot_start(b.date, b.part().time), b.part().lead)
@@ -476,7 +479,8 @@ class WebApp:
                       "family": "Reading your family members", "new-login": "Checking your login",
                       "dry-run": "Looking at the court sheet", "clock": "Checking the PC clock",
                       "test-booking": "Test booking", "court-check": "Validate booking",
-                      "calendar": "Court calendar"}
+                      "calendar": "Court calendar", "reservations": "My reservations",
+                      "cancel": "Cancel a reservation"}
             if kind not in titles:
                 raise UserError("Unknown check.")
             if kind != "clock" and not login:
@@ -546,6 +550,28 @@ class WebApp:
                                                     lambda q: job.ask(q, True)))
                 return r in ("cancelled", "kept")
             return work
+        if kind == "reservations":
+            try:
+                frm, to = date.fromisoformat(str(body.get("from"))), date.fromisoformat(str(body.get("to")))
+            except ValueError:
+                raise UserError("Choose the dates first.")
+            if to < frm:
+                frm, to = to, frm
+            if (to - frm).days > 366:
+                raise UserError("Choose at most a year at a time.")
+            family = bool(body.get("family"))
+            return self._live_work(job, cfg, login, lambda site: runner.reservations_on(site, frm, to, family, say))
+        if kind == "cancel":
+            r = body.get("reservation") or {}
+            try:
+                r = {"guid": str(r["guid"]).lower(), "date": str(r["date"]), "start": int(r["start"]),
+                     "end": int(r["end"]), "court": r.get("court"), "what": str(r.get("what") or "")[:60]}
+                datetime.strptime(r["date"], "%m/%d/%Y")
+            except (KeyError, TypeError, ValueError):
+                raise UserError("That reservation isn't there any more. Refresh the list.")
+            if not body.get("confirmed"):
+                raise UserError("Confirm the cancellation first.")
+            return self._live_work(job, cfg, login, lambda site: runner.cancel_on(site, r, say))
         if kind in ("court-check", "calendar"):
             try:
                 day = date.fromisoformat(str(body.get("date")))
@@ -560,7 +586,7 @@ class WebApp:
             lengths = [length] + ([x for x in (60, 30) if x < length] if body.get("shorter_ok") else [])
             courts = list(body.get("courts") or ["any"])
             machine = body.get("machine") or None
-            if machine is not None and machine not in site_mod.MACHINES:
+            if machine is not None and machine not in config.MACHINES:
                 raise UserError("Unknown ball machine.")
             return self._live_work(job, cfg, login, lambda site: runner.court_check_on(
                 site, day, start, lengths, courts, say, machine))

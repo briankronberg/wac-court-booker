@@ -49,6 +49,7 @@ class Slot:
     court: int
     resource: str = ""
     service: str = ""
+    provider: str = ""   # a ball machine's id, for ball machine bookings
 
     @property
     def end(self) -> int:
@@ -57,7 +58,8 @@ class Slot:
     def describe(self) -> str:
         m, d, y = self.date.split("/")
         day = datetime(int(y), int(m), int(d))
-        return f"Ct {self.court}, {day:%a} {int(m)}/{int(d)} {clubtime.fmt_time(self.start)}, {self.length} min"
+        what = {"442": " + Genie", "121": " + ball machine"}.get(self.provider, "")
+        return f"Ct {self.court}{what}, {day:%a} {int(m)}/{int(d)} {clubtime.fmt_time(self.start)}, {self.length} min"
 
 
 class SiteError(RuntimeError):
@@ -203,7 +205,7 @@ class Engine:
         raise SiteError(f"couldn't sign in: {last}", "login")
 
     async def choose(self) -> Slot | None:
-        open_by_len = await self.site.find_open(self.date, self.b.time, self.b.lengths, self.b.play)
+        open_by_len = await self.site.find_open(self.date, self.b.time, self.b.lengths, self.b.site_play)
         summary = {L: sorted(v) for L, v in open_by_len.items()}
         self.log(f"open courts by length: {summary}")
         return pick(open_by_len, self.b, self.tried)
