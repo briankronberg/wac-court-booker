@@ -293,37 +293,9 @@ class WebApp:
             old = cfg.booking(old_name) if old_name else None
             if old_name and not old:
                 raise UserError("That booking was changed somewhere else. Close this and try again.")
-            login = str(body.get("login") or (cfg.logins[0].nickname if cfg.logins else ""))
-            if not cfg.login(login):
-                raise UserError("Add your club login first (Settings).")
-            try:
-                minutes = int(body.get("time"))
-            except (TypeError, ValueError):
-                raise UserError("Choose a start time.")
-            raw: dict[str, Any] = {
-                "name": "x", "login": login, "play": body.get("play"),
-                **({"machine": body.get("machine") or "either"} if body.get("play") == "machine" else {}),
-                "partners": [" ".join(str(p).split()) for p in body.get("partners") or []],
-                "time": clubtime.fmt_time(minutes), "length": body.get("length"),
-                "shorter_ok": bool(body.get("shorter_ok")) and int(body.get("length") or 0) > 30,
-                "courts": body.get("courts") or [],
-                "skip": [d.isoformat() for d in old.skip] if old else [],
-                "active": old.active if old else True,
-            }
-            if body.get("weekly", True):
-                if body.get("day") is None:
-                    raise UserError("Choose a day of the week.")
-                raw["day"] = clubtime.DAYS[int(body["day"])]
-                raw["skip"] = raw["skip"] if old and old.day == int(body["day"]) else []
-            else:
-                if not body.get("date"):
-                    raise UserError("Choose a date.")
-                raw["date"] = body["date"]
-                raw["skip"] = []
-            errs: list[str] = []
-            b = config.parse_booking(raw, 1, errs)
+            b, errs = self._form_booking(cfg, body, old)
             if errs:
-                return {"ok": False, "errors": [e.replace("Booking 'x': ", "") for e in errs]}
+                return {"ok": False, "errors": errs}
             others = [x.name for x in cfg.bookings if not old or x.name != old.name]
             b.name = config.auto_name(b.play, b.partners, b.day, b.date, b.time, others, b.machine)
             if old and old.name != config.auto_name(old.play, old.partners, old.day, old.date, old.time, others,
@@ -333,12 +305,45 @@ class WebApp:
                 w = clubtime.window_open(clubtime.slot_start(b.date, b.part().time), b.part().lead)
                 if w < clubtime.now_central() + timedelta(minutes=20):
                     return {"ok": False, "errors": [
-                        f"Booking for that date opened {clubtime.fmt_when(w)}, so it's too late for the app. "
-                        "Book it on the club site."]}
+                        f"Booking for that date opened {clubtime.fmt_when(w)}, so there's nothing to schedule. "
+                        "Use Book Now to book it straight away."]}
             config.put_booking(doc, b, replace=old.name if old else None)
             out = self._commit(doc, f"booking '{b.name}'")
             out["name"] = b.name
             return out
+
+    def _form_booking(self, cfg: config.Config, body: dict, old: Booking | None = None):
+        """The booking form's fields as a Booking (named 'x'), and any mistakes in them."""
+        login = str(body.get("login") or (cfg.logins[0].nickname if cfg.logins else ""))
+        if not cfg.login(login):
+            raise UserError("Add your club login first (Settings).")
+        try:
+            minutes = int(body.get("time"))
+        except (TypeError, ValueError):
+            raise UserError("Choose a start time.")
+        raw: dict[str, Any] = {
+            "name": "x", "login": login, "play": body.get("play"),
+            **({"machine": body.get("machine") or "either"} if body.get("play") == "machine" else {}),
+            "partners": [" ".join(str(p).split()) for p in body.get("partners") or []],
+            "time": clubtime.fmt_time(minutes), "length": body.get("length"),
+            "shorter_ok": bool(body.get("shorter_ok")) and int(body.get("length") or 0) > 30,
+            "courts": body.get("courts") or [],
+            "skip": [d.isoformat() for d in old.skip] if old else [],
+            "active": old.active if old else True,
+        }
+        if body.get("weekly", True):
+            if body.get("day") is None:
+                raise UserError("Choose a day of the week.")
+            raw["day"] = clubtime.DAYS[int(body["day"])]
+            raw["skip"] = raw["skip"] if old and old.day == int(body["day"]) else []
+        else:
+            if not body.get("date"):
+                raise UserError("Choose a date.")
+            raw["date"] = body["date"]
+            raw["skip"] = []
+        errs: list[str] = []
+        b = config.parse_booking(raw, 1, errs)
+        return b, [e.replace("Booking 'x': ", "") for e in errs]
 
     def _booking(self, cfg: config.Config, name: str) -> Booking:
         b = cfg.booking(str(name or ""))
@@ -480,7 +485,7 @@ class WebApp:
                       "dry-run": "Looking at the court sheet", "clock": "Checking the PC clock",
                       "test-booking": "Test booking", "court-check": "Validate booking",
                       "calendar": "Court calendar", "reservations": "My reservations",
-                      "cancel": "Cancel a reservation"}
+                      "cancel": "Cancel a reservation", "book-now": "Book now"}
             if kind not in titles:
                 raise UserError("Unknown check.")
             if kind != "clock" and not login:
@@ -550,6 +555,17 @@ class WebApp:
                                                     lambda q: job.ask(q, True)))
                 return r in ("cancelled", "kept")
             return work
+        if kind == "book-now":
+            b, errs = self._form_booking(cfg, {**body, "weekly": False})
+            if errs:
+                raise UserError(" ".join(errs))
+            b.name = config.auto_name(b.play, b.partners, None, b.date, b.time, [], b.machine)
+            why = runner.book_now_block(b, clubtime.now_central())
+            if why:
+                raise UserError(f"Book Now isn't open yet: {why}.")
+            if not body.get("confirmed"):
+                raise UserError("Confirm the booking first.")
+            return lambda: asyncio.run(runner.book_now(cfg, b, login, say)) == "booked"
         if kind == "reservations":
             try:
                 frm, to = date.fromisoformat(str(body.get("from"))), date.fromisoformat(str(body.get("to")))

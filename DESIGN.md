@@ -89,6 +89,7 @@ Rules the app enforces:
 - `courts` holds court numbers and at most one `any`, which must come last.
 - The number of partners matches `play`.
 - No two bookings on the same login overlap. The club allows 2 reservations per login per day, and the app warns when a day would go over that.
+- **Book Now** (`book-now` job, `runner.book_now`) runs the same engine with W = now for a one-off date whose every part's window is open (`runner.book_now_block`); a weekly booking sends its soonest open date. A split booking books its regular part, then the Prime Time part on the same court first. The page greys the button out with the same rule (club time via `America/Chicago`), and Save booking refuses one-off dates opening within 20 minutes.
 - After signing in, a run reads the login's own reservations for the day (`engine.day_check`). At the limit, or with one overlapping the booking's time, it stops as not booked before staging: the club refuses such a commit without a clear answer (the press times out), which would otherwise end as a vague failure. If the report can't be read, the run goes ahead. Validate booking and the test booking use the same check (`engine.day_conflict`).
 - Each window must be in the future, and a one-off date has to be at least 169 hours away when it's added (24 hours for Prime Time singles), otherwise "book this on the club site now".
 

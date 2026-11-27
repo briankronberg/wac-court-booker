@@ -620,13 +620,12 @@ function renderForm(el) {
   if (need) h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
 
   h += sec("How often?", `<div class="row once-row"><div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>
-     ${f.weekly ? "" : `<div class="row avail"><button class="btn" id="f-cal" type="button">See Available Courts</button></div>`}</div>`,
-    f.weekly ? "" : "For a one-off date you can see every court for the day first. Press an open court there to use its time here.");
+     <div class="row avail"><button class="btn" id="f-cal" type="button">See Available Courts</button></div></div>`,
+    "See Available Courts shows every court for the day. Press an open court there to use its date and time here.");
   if (f.weekly) h += sec("Which day?", `<div class="choices">${DAYS.map((d, i) => choice("day", i, d.slice(0, 3), "")).join("")}</div>`);
   else {
-    const min = new Date(Date.now() + (f.play === "doubles" ? 7 : 1) * 864e5).toISOString().slice(0, 10);
-    h += sec("Which date?", `<input type="date" id="f-date" min="${min}" value="${esc(f.date || "")}">`,
-      f.play !== "doubles" ? "More than a week away (or more than a day away for Prime Time). For sooner dates, book on the club site." : "More than a week away. For sooner dates, book on the club site.");
+    h += sec("Which date?", `<input type="date" id="f-date" min="${isoDay(new Date())}" value="${esc(f.date || "")}">`,
+      "If the club already takes bookings for that time (a week ahead, or a day ahead in Prime Time), use Book Now. Otherwise Save booking books it the moment the club opens it.");
   }
   const times = []; for (let m = 5 * 60; m <= 21 * 60 + 30; m += 30) times.push(m);
   h += sec("What time do you start?", `<select id="f-time" aria-label="Start time"><option value="">Choose a time</option>${times.map((m) => `<option value="${m}" ${f.time === m ? "selected" : ""}>${fmtTime(m)}</option>`).join("")}</select>`);
@@ -647,9 +646,12 @@ function renderForm(el) {
       ${fixes.length ? `<p><b>For the best chance, pick a time that stays on one side:</b></p><div class="choices">${fixes.map((x, i) => `<button type="button" class="choice" data-fix="${i}">${esc(x.label)}<small>${esc(x.sub)}</small></button>`).join("")}</div>` : ""}</div>`;
   }
   const s = summaryText(f);
+  const ws = s.ok ? windowState(f) : null;
+  const canSave = s.ok && ws.saveOk, canNow = s.ok && ws.nowOk && !f.old_name;
   h += `<div class="summary">${f.errors.length ? `<ul class="errors">${f.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
     <p>${s.ok ? "<b>You're booking:</b> " : ""}${esc(s.text)}</p>
-    <div class="row"><button class="btn big" id="f-check" type="button" title="Check on the club site that courts are open at this time">Validate booking</button><button class="btn primary big" id="f-save" type="button" ${s.ok ? "" : "disabled"}>${f.old_name ? "Save changes" : "Save booking"}</button><button class="btn" id="f-cancel2" type="button">Cancel</button></div></div>`;
+    ${ws && ws.note ? `<p class="small muted" id="f-when">${esc(ws.note)}</p>` : ""}
+    <div class="row"><button class="btn big" id="f-check" type="button" title="Check on the club site that courts are open at this time">Validate booking</button><button class="btn primary big" id="f-save" type="button" ${canSave ? "" : "disabled"}>${f.old_name ? "Save changes" : "Save booking"}</button>${f.old_name ? "" : `<button class="btn primary big" id="f-now" type="button" ${canNow ? "" : "disabled"} title="${canNow ? "Book it on the club site straight away" : "Available once every detail is chosen and the club is taking bookings for this time"}">Book Now</button>`}<button class="btn" id="f-cancel2" type="button">Cancel</button></div></div>`;
   el.innerHTML = h;
 
   const cancel = () => { form = null; render(); };
@@ -704,8 +706,83 @@ function renderForm(el) {
     if (f.time === null) { toast("Choose the start time first.", true); return; }
     runJob({ kind: "court-check", login: f.login, date: day, time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: f.courts.length ? f.courts : ["any"], machine: f.play === "machine" ? f.machine : null });
   };
-  if ($("#f-cal")) $("#f-cal").onclick = () => openCalendar(f.date || isoDay(new Date()), f.login, f.date ? f.time : null, f.length);
+  $("#f-cal").onclick = () => {
+    const day = f.weekly ? (f.day === null ? null : (windowState(f).nowDate || nextWeekly(f.day))) : f.date;
+    openCalendar(day || isoDay(new Date()), f.login, day ? f.time : null, f.length);
+  };
   $("#f-save").onclick = saveForm;
+  if ($("#f-now")) $("#f-now").onclick = bookNow;
+}
+
+// ----- booking windows (club time is US Central). A time opens 169 hours ahead; Prime Time
+// singles and ball machines 24 hours ahead; a split booking's two parts open separately.
+function centralMs(iso, m) {
+  const [y, mo, d] = iso.split("-").map(Number);
+  const wall = Date.UTC(y, mo - 1, d, Math.floor(m / 60), m % 60);
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const off = (t) => { const p = Object.fromEntries(fmt.formatToParts(new Date(t)).map((x) => [x.type, x.value])); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute) - t; };
+  let t = wall - off(wall); t = wall - off(t);
+  return t;
+}
+function partsOf(f) {
+  const pt = primeOf(f);
+  if (!pt) return [{ start: f.time, length: f.length, lead: 169 }];
+  if (pt.kind === "all") return [{ start: f.time, length: f.length, lead: 24 }];
+  return [{ ...pt.main, lead: 169 }, { ...pt.prime, lead: 24 }];
+}
+// The date Book Now books: a one-off's date, or a weekly booking's soonest date still ahead.
+function soonestDate(f) {
+  if (!f.weekly) return f.date;
+  if (f.day === null || f.time === null) return null;
+  const d = new Date();
+  for (let i = 0; i < 8; i++, d.setDate(d.getDate() + 1)) {
+    const iso = isoDay(d);
+    if ((d.getDay() + 6) % 7 === f.day && centralMs(iso, f.time) > Date.now()) return iso;
+  }
+  return null;
+}
+function whenText(ms) {
+  return new Date(ms).toLocaleString("en-US", { weekday: "short", month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+// saveOk: Save booking can schedule it (weekly, or a one-off whose window opens more than
+// 20 minutes from now). nowOk: Book Now can book nowDate straight away.
+function windowState(f) {
+  const out = { saveOk: true, nowOk: false, nowDate: null, note: "" };
+  const day = soonestDate(f);
+  if (!day || f.time === null) return out;
+  const now = Date.now(), parts = partsOf(f);
+  const starts = parts.map((p) => centralMs(day, p.start)), opens = parts.map((p, i) => starts[i] - p.lead * 3600e3);
+  const dayText = new Date(day + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+  if (Math.min(...starts) <= now) {
+    out.saveOk = f.weekly;
+    out.note = f.weekly ? "" : "That time has already passed.";
+    return out;
+  }
+  if (Math.max(...opens) <= now) {
+    out.nowOk = true; out.nowDate = day;
+    out.note = `The club is taking bookings for ${dayText} now: Book Now books it straight away.`
+      + (f.weekly ? " Save booking books it every week from the next date the club opens." : "");
+  } else if (!f.weekly) {
+    out.note = `The club opens this time for booking ${whenText(Math.max(...opens))}. Save booking books it then; Book Now works from then too.`;
+  }
+  if (!f.weekly && Math.min(...opens) <= now + 20 * 60e3) {
+    out.saveOk = false;
+    if (!out.nowOk) out.note = `The club opens this time for booking ${whenText(Math.max(...opens))}, too soon to schedule. Book Now works from then.`;
+  }
+  return out;
+}
+
+async function bookNow() {
+  const f = form, ws = windowState(f);
+  if (!ws.nowOk) return;
+  const day = new Date(ws.nowDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
+  if (!ok) return;
+  const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners, date: ws.nowDate,
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+  const j = await runJob(body);
+  if (j && j.ok) { form = null; view = "home"; }
+  await refresh();
 }
 
 // The date a weekly booking books next: the first such weekday more than a week away.

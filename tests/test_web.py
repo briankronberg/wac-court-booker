@@ -131,7 +131,7 @@ def test_mistakes_come_back_in_plain_words(srv):
     assert not r["ok"] and "half hour" in r["errors"][0]
     soon = (clubtime.now_central() + timedelta(days=2)).date().isoformat()
     _, r = call(srv, "/api/booking", booking(weekly=False, date=soon))
-    assert not r["ok"] and "club site" in r["errors"][0]
+    assert not r["ok"] and "Book Now" in r["errors"][0]
     # Two bookings at the same time on one login overlap.
     assert call(srv, "/api/booking", booking())[1]["ok"]
     _, r = call(srv, "/api/booking", booking(partners=["Pat Lee"]))

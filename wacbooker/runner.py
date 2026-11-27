@@ -201,6 +201,71 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
         await site.close()
 
 
+# ---------------------------------------------------------------- book now
+
+def book_now_block(b: Booking, now: datetime) -> str | None:
+    """Why a one-off booking can't be booked right now, or None: every part's booking
+    window must be open and the time still ahead."""
+    for p in b.parts:
+        st = clubtime.slot_start(b.date, p.time)
+        when = f"{span(p.time, p.length)} on {b.date:%a} {b.date.month}/{b.date.day}"
+        if st <= now:
+            return f"{when} has already started"
+        w = clubtime.window_open(st, p.lead)
+        if w > now:
+            return f"the club opens {when} for booking {clubtime.fmt_when(w)}"
+    return None
+
+
+async def book_now(cfg: Config, b: Booking, login: Login, say: Say, clock=None) -> str:
+    """Book a one-off booking straight away, its window already open: the same engine a
+    scheduled run uses, with W = now. A Prime Time part goes second, same court first,
+    and only if the first part was booked. Returns 'booked', 'not_booked' or 'unsure'."""
+    log = _log(f"book now {b.name}")
+    clk = clock or RealClock()
+    why = book_now_block(b, clubtime.now_central())
+    if why:
+        say(f"Not booked: {why}.")
+        return "not_booked"
+    try:
+        site = await start_site(cfg, login, log)
+    except SiteError as e:
+        say(f"Not booked: {e}.")
+        return "not_booked"
+    statuses: list[str] = []
+    try:
+        got = None
+        for p in b.parts:
+            pb = b.for_part(p.key)
+            if p.key == "prime":
+                if got is None:
+                    break
+                pb.courts = [got] + [c for c in b.courts if c != got]
+                if "any" not in pb.courts:
+                    pb.courts.append("any")
+            say(f"Booking {span(p.time, p.length)} on {b.date:%a %b} {b.date.day}…")
+            w = datetime.fromtimestamp(clk.now(), clubtime.CENTRAL)  # W = now: the window is open
+            occ = clubtime.Occurrence(b.date, clubtime.slot_start(b.date, p.time), w)
+            res = await Engine(pb, occ, site, clk, log=log).run()
+            if res.status == "not_booked":
+                await site.release()
+            say(res.message)
+            results.record("book-now", b.name, res.status, res.message, part=p.key, day=b.date.isoformat(),
+                           court=res.slot.court if res.slot else None, slot=res.slot.describe() if res.slot else "",
+                           attempts=len(res.attempts))
+            notify.toast({"booked": "Booked", "unsure": "Check your bookings"}.get(res.status, "Not booked"), res.message)
+            statuses.append(res.status)
+            if not res.booked:
+                break
+            got = res.slot.court if res.slot else None
+    finally:
+        keep_family(login, site)
+        await site.close()
+    if statuses and all(s == "booked" for s in statuses) and len(statuses) == len(b.parts):
+        return "booked"
+    return "unsure" if "unsure" in statuses else "not_booked"
+
+
 # ---------------------------------------------------------------- tests (menu 8)
 
 async def login_test(cfg: Config, login: Login, say: Say) -> str | None:
