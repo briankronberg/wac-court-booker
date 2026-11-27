@@ -8,12 +8,17 @@ from wacbooker.engine import Engine, Slot, pick
 from fakes import FakeClock, FakeSite, booking, occurrence
 
 
-def run(site_kw=None, booking_kw=None, start_rel=-75 * 60):
+def run(site_kw=None, booking_kw=None, chooser=None, first_court=None, start_rel=-75 * 60):
     occ = occurrence()
     W = occ.window.timestamp()
     clock = FakeClock(W + start_rel)
     site = FakeSite(clock, W, **(site_kw or {}))
-    eng = Engine(booking(**(booking_kw or {})), occ, site, clock)
+    kw = {}
+    if chooser is not None:
+        kw["chooser"] = chooser
+    if first_court is not None:
+        kw["first_court"] = first_court
+    eng = Engine(booking(**(booking_kw or {})), occ, site, clock, **kw)
     res = asyncio.run(eng.run())
     return res, site, clock, W
 
@@ -174,3 +179,18 @@ def test_fresh_pages_until_the_gate_then_one_press():
     res, site, *_ = run()
     assert res.booked
     assert site.presses == 1   # nothing sent while the page's rows were still off
+
+
+def test_chooser_picks_in_place_of_pick():
+    def forced(open_by_len, b, tried):
+        return open_by_len[90][3]
+    res, site, *_ = run(chooser=forced)
+    assert res.status == "booked"
+    assert res.slot.court == 3
+    assert len(site.booked) == 1
+
+
+def test_first_court_goes_before_the_listed_courts():
+    res, site, *_ = run(booking_kw={"courts": [3, "any"]}, first_court=5)
+    assert res.status == "booked"
+    assert res.slot.court == 5

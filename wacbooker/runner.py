@@ -81,11 +81,13 @@ def span(start: int, length: int) -> str:
     return f"{clubtime.fmt_time(start)} to {clubtime.fmt_time(start + length)}"
 
 
-def main_part_court(name: str, day) -> int | None:
-    """The court the regular part of a split booking got on `day`, or None if it wasn't booked."""
+def main_part_court(name: str, day, login: str, own: str) -> int | None:
+    """The court `login`'s regular part of a split booking got on `day`, or None if it
+    wasn't booked. Records without a login predate coordinated logins: they are the
+    booking's own, so they only count for `own`."""
     for r in reversed(results.recent(300)):
         if (r.get("kind") == "run" and r.get("booking") == name and r.get("part", "main") == "main"
-                and r.get("day") == day.isoformat()):
+                and r.get("day") == day.isoformat() and r.get("login", own) == login):
             return r.get("court") if r.get("status") == "booked" else None
     return None
 
@@ -128,22 +130,37 @@ def run_booking(name: str, part: str = "main") -> int:
         results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
         return 0
     pb = b.for_part(part)
+    first_courts = None
     if part == "prime":
         # The Prime Time part only makes sense next to the regular part: same court if it can.
-        got = main_part_court(name, occ.day)
-        if got is None:
-            msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
-                   f"{occ.day:%a %m/%d}): the first part wasn't booked.")
-            log(msg)
-            results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
-            return 0
-        pb.courts = [got] + [c for c in b.courts if c != got]
-        if "any" not in pb.courts:
-            pb.courts.append("any")
-        log(f"Prime Time part; the first part got court {got}, so it goes first")
+        if b.also:
+            # coordinated logins: each login's own court from the first part goes first for it
+            first_courts = {m.login: main_part_court(name, occ.day, m.login, b.login) for m in b.members}
+            if all(c is None for c in first_courts.values()):
+                msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
+                       f"{occ.day:%a %m/%d}): the first part wasn't booked.")
+                log(msg)
+                results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
+                return 0
+            first_courts = {l: c for l, c in first_courts.items() if c is not None}
+            log(f"Prime Time part; each login's first part went first: {first_courts}")
+        else:
+            got = main_part_court(name, occ.day, b.login, b.login)
+            if got is None:
+                msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
+                       f"{occ.day:%a %m/%d}): the first part wasn't booked.")
+                log(msg)
+                results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
+                return 0
+            pb.courts = [got] + [c for c in b.courts if c != got]
+            if "any" not in pb.courts:
+                pb.courts.append("any")
+            log(f"Prime Time part; the first part got court {got}, so it goes first")
     login = cfg.login(b.login)
-    if not creds.has_password(login.username):
-        msg = (f"Not booked: no saved password for login '{login.nickname}' "
+    missing = [m.login for m in b.members if not creds.has_password(cfg.login(m.login).username)]
+    if missing:
+        who = " and ".join(f"'{n}'" for n in missing)
+        msg = (f"Not booked: no saved password for login{'s' if len(missing) > 1 else ''} {who} "
                f"(or Windows Credential Manager wasn't reachable). Book on the club site.")
         log(msg)
         results.record("run", name, "not_booked", msg)
@@ -153,12 +170,15 @@ def run_booking(name: str, part: str = "main") -> int:
         with run_lock(name):
             keep_awake(True)
             try:
-                res = asyncio.run(_run_async(cfg, pb, occ, login, log))
+                res = asyncio.run(_run_async(cfg, pb, occ, login, log, first_courts))
             finally:
                 keep_awake(False)
     except RuntimeError as e:
         log(f"not started: {e}")
         return 1
+    if b.also:
+        # one result per member, one toast for the group
+        return _finish_group(b, part, occ, res, log)
     title = {"booked": "Booked", "unsure": "Check your bookings"}.get(res.status, "Not booked")
     if b.prime_kind == "split" and part == "main" and res.booked:
         pp = b.part("prime")
@@ -176,7 +196,8 @@ def run_booking(name: str, part: str = "main") -> int:
     return 0 if res.booked else 1
 
 
-async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: Login, log):
+async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: Login, log,
+                     first_courts: dict | None = None):
     offset, src = clock.measure()
     offset = offset or 0.0
     log(f"target {clubtime.fmt_when(occ.start)}, window {occ.window:%m/%d %H:%M:%S} Central; "
@@ -186,6 +207,9 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
     if wait > 0:
         log(f"waiting {wait / 60:.0f} min until 15 minutes before the window")
         await asyncio.sleep(wait)
+    if b.also:
+        # coordinated logins: one site per login, all sharing this clock
+        return await run_group(cfg, b, occ, rc, log, first_courts)
     try:
         site = await start_site(cfg, login, log)
     except SiteError as e:
@@ -199,6 +223,61 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
     finally:
         keep_family(login, site)
         await site.close()
+
+
+async def run_group(cfg: Config, b: Booking, occ: clubtime.Occurrence, clock, log,
+                    first_courts: dict | None = None) -> dict:
+    """Book one occurrence with every login of the booking at the same time: one site per
+    login, all sharing `clock`, and a Group so the courts end up different, side by side
+    when the sheet allows. Returns {login nickname: RunResult}."""
+    from .engine import RunResult
+    from .group import Group
+    group = Group(len(b.members))
+
+    async def one(i: int):
+        member = b.members[i]
+        lg = cfg.login(member.login)
+        try:
+            site = await start_site(cfg, lg, log)
+        except SiteError as e:
+            return RunResult("unsure", f"couldn't open {member.login}'s page: {e}")
+        eng = Engine(b.for_member(member), occ, site, clock, log=log, chooser=group.chooser(i),
+                     first_court=first_courts.get(member.login) if first_courts else None)
+        try:
+            res = await eng.run()
+        except SiteError as e:
+            res = RunResult("unsure", f"{member.login}: {e}")
+        finally:
+            if res.status == "not_booked":
+                await site.release()
+            keep_family(lg, site)
+            await site.close()
+        return res
+
+    out = await asyncio.gather(*[one(i) for i in range(len(b.members))])
+    return {m.login: r for m, r in zip(b.members, out)}
+
+
+def _finish_group(b: Booking, part: str, occ: clubtime.Occurrence, out: dict, log) -> int:
+    """Record one result per member of a coordinated run and toast the group once."""
+    lines = []
+    for m in b.members:
+        r = out[m.login]
+        results.record("run", b.name, r.status, r.message, part=part, day=occ.day.isoformat(),
+                       login=m.login, court=r.slot.court if r.slot else None,
+                       slot=r.slot.describe() if r.slot else "", attempts=len(r.attempts),
+                       accepted_at=next((a["t"] for a in r.attempts if a["outcome"] == CONFIRMED), None))
+        if r.status == "booked":
+            lines.append(f"Ct {r.slot.court} for {m.login}")
+        else:
+            lines.append(f"{m.login}: {r.message}")
+    all_booked = all(r.status == "booked" for r in out.values())
+    title = ("Booked" if all_booked else
+             "Check your bookings" if any(r.status == "unsure" for r in out.values()) else "Not booked")
+    msg = " \u00b7 ".join(lines)
+    notify.toast(title, msg)
+    log(f"done: {msg}")
+    return 0 if all_booked else 1
 
 
 # ---------------------------------------------------------------- book now
@@ -227,6 +306,8 @@ async def book_now(cfg: Config, b: Booking, login: Login, say: Say, clock=None) 
     if why:
         say(f"Not booked: {why}.")
         return "not_booked"
+    if b.also:
+        return await _book_now_group(cfg, b, say, clk, log)
     try:
         site = await start_site(cfg, login, log)
     except SiteError as e:
@@ -262,6 +343,38 @@ async def book_now(cfg: Config, b: Booking, login: Login, say: Say, clock=None) 
         keep_family(login, site)
         await site.close()
     if statuses and all(s == "booked" for s in statuses) and len(statuses) == len(b.parts):
+        return "booked"
+    return "unsure" if "unsure" in statuses else "not_booked"
+
+
+async def _book_now_group(cfg: Config, b: Booking, say, clk, log) -> str:
+    """Book a coordinated one-off: one site per login per part, each login's own court
+    first for the second part, which goes only if every login got the first one."""
+    statuses: list[str] = []
+    first_courts = None
+    for p in b.parts:
+        pb = b.for_part(p.key)
+        if p.key == "prime" and not first_courts:
+            say("Not booked: the Prime Time part needs every login's first part booked.")
+            break
+        say(f"Booking {span(p.time, p.length)} on {b.date:%a %b} {b.date.day}…")
+        w = datetime.fromtimestamp(clk.now(), clubtime.CENTRAL)  # W = now: the window is open
+        occ = clubtime.Occurrence(b.date, clubtime.slot_start(b.date, p.time), w)
+        out = await run_group(cfg, pb, occ, clk, log, first_courts)
+        for m in b.members:
+            r = out[m.login]
+            say(r.message)
+            results.record("book-now", b.name, r.status, r.message, part=p.key, day=b.date.isoformat(),
+                           login=m.login, court=r.slot.court if r.slot else None,
+                           slot=r.slot.describe() if r.slot else "", attempts=len(r.attempts))
+        statuses.extend(r.status for r in out.values())
+        if all(r.status == "booked" for r in out.values()):
+            first_courts = {m.login: out[m.login].slot.court for m in b.members}
+            notify.toast("Booked", " \u00b7 ".join(f"Ct {out[m.login].slot.court} for {m.login}" for m in b.members))
+        else:
+            notify.toast("Not booked", " \u00b7 ".join(f"{m.login}: {out[m.login].message}" for m in b.members))
+            break
+    if statuses and all(s == "booked" for s in statuses) and len(statuses) == len(b.parts) * len(b.members):
         return "booked"
     return "unsure" if "unsure" in statuses else "not_booked"
 

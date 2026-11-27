@@ -163,6 +163,36 @@ def test_remove_login_refused_while_bookings_use_it(srv):
     assert not r["ok"] and "use it" in r["errors"][0]
 
 
+def test_also_login_saves_shows_and_cleans(srv):
+    """'Also book for another login at the same time': its login and partners are saved,
+    the My-bookings description says so, and leaving it out of an edit takes them out."""
+    add_login(srv)
+    st, r = call(srv, "/api/login", {"username": "jdoe", "password": "***"})
+    assert st == 200 and r["ok"], r
+    _, r = call(srv, "/api/booking", booking(play="doubles",
+                                             partners=["Pat Lee", "Sam Ortiz", "Kim Park"],
+                                             also="jdoe", also_partners=["A B", "C D", "E F"]))
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["who"] == "Doubles with Pat Lee, Sam Ortiz and Kim Park; also jdoe with A B, C D and E F"
+    assert b["also"] == [{"login": "jdoe", "partners": ["A B", "C D", "E F"]}]
+    _, r = call(srv, "/api/booking", booking(old_name=b["name"], play="doubles",
+                                             partners=["Pat Lee", "Sam Ortiz", "Kim Park"]))
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["also"] == [] and b["who"] == "Doubles with Pat Lee, Sam Ortiz and Kim Park"
+
+
+def test_also_not_saved_for_ball_machines(srv):
+    add_login(srv)
+    call(srv, "/api/login", {"username": "jdoe", "password": "***"})
+    _, r = call(srv, "/api/booking", booking(play="machine", partners=[], courts=[2, 3, "any"],
+                                             also="jdoe", also_partners=[]))
+    assert not r["ok"] and "ball machine" in " ".join(r["errors"])
+
+
 def test_quit_stops_the_server(srv):
     _, r = call(srv, "/api/quit", {})
     assert r["ok"] and srv.app.stop_requested

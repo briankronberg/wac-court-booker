@@ -99,7 +99,9 @@ def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict 
         "shorter_ok": b.shorter_ok, "courts": b.courts, "active": b.active,
         "skip": [d.isoformat() for d in b.skip],
         "title": f"{when}, {span_text(b.time, b.length)}",
-        "who": b.what + (f" with {names_text(b.partners)}" if b.partners else ""),
+        "who": b.what + (f" with {names_text(b.partners)}" if b.partners else "")
+              + "".join(f"; also {m.login} with {names_text(m.partners)}" for m in b.also),
+        "also": [{"login": m.login, "partners": m.partners} for m in b.also],
         "courts_text": courts_text(b.courts) + (f". Shorter if no court has {b.length} minutes."
                                                 if b.shorter_ok else "."),
         "weekly": weekly,
@@ -331,6 +333,10 @@ class WebApp:
             "skip": [d.isoformat() for d in old.skip] if old else [],
             "active": old.active if old else True,
         }
+        also = str(body.get("also") or "").strip()
+        if also:
+            raw["also"] = [{"login": also, "partners": [p.strip() for p in (body.get("also_partners") or [])
+                                                       if p.strip()]}]
         if body.get("weekly", True):
             if body.get("day") is None:
                 raise UserError("Choose a day of the week.")

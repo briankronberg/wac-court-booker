@@ -504,9 +504,11 @@ async function bookingAction(act, b) {
 // ------------------------------------------------------------------ booking form
 function startForm(b) {
   const login = b ? b.login : (S.logins[0] || {}).nickname;
-  form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners], weekly: b.weekly, day: b.day, date: b.date,
+  form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners],
+    also: b.also && b.also[0] ? b.also[0].login : "", also_partners: b.also && b.also[0] ? [...b.also[0].partners] : [], aq: "",
+    weekly: b.weekly, day: b.day, date: b.date,
     time: b.time, length: b.length, shorter_ok: b.shorter_ok, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
-    : { login, play: "singles", machine: "genie", partners: [], weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, courts: [], any: true, errors: [], q: "" };
+    : { login, play: "singles", machine: "genie", partners: [], also: "", also_partners: [], aq: "", weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, courts: [], any: true, errors: [], q: "" };
   window.scrollTo(0, 0);
   render();
 }
@@ -526,6 +528,7 @@ function summaryText(f) {
   if (f.weekly ? f.day === null : !f.date) missing.push(f.weekly ? "the day" : "the date");
   if (f.time === null) missing.push("the time");
   if (!f.courts.length && !f.any) missing.push("a court");
+  if (f.also && f.also_partners.length !== need) missing.push(need === 1 ? `${f.also}'s partner` : `${f.also}'s ${need - f.also_partners.length} more players`);
   if (missing.length) return { ok: false, text: "Still to choose: " + namesText(missing) + "." };
   let when;
   if (f.weekly) when = `Every ${DAYS[f.day]}`;
@@ -536,7 +539,8 @@ function summaryText(f) {
   const pt = primeOf(f);
   const how = !pt ? "" : pt.kind === "all" ? " Prime Time: the app books it 24 hours ahead."
     : ` Books in two parts: ${spanText(pt.main.start, pt.main.length)} a week ahead, ${spanText(pt.prime.start, pt.prime.length)} 24 hours ahead.`;
-  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${how}` };
+  const alsoTxt = f.also ? ` Also ${f.also} books a court at the same time${f.also_partners.length ? ` with ${namesText(f.also_partners)}` : ""}.` : "";
+  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${alsoTxt}${how}` };
 }
 
 // Prime Time (the club's FAQ). Singles in these hours can only be booked 24 hours ahead.
@@ -619,6 +623,31 @@ function renderForm(el) {
      <div class="row" style="margin-top:8px"><input type="text" id="f-other" placeholder="Full name, as the club site shows it" style="max-width:320px"><button class="btn" id="f-addother" type="button">Add</button></div></details>`;
   if (need) h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
 
+  if (S.logins.length > 1 && f.play !== "machine") {
+    const others = S.logins.filter((l) => l.nickname !== f.login);
+    let h2 = `<div class="choices">${others.map((l) => choice("also", l.nickname, esc(l.nickname), esc(l.username))).join("")}${choice("also", "", "No")}</div>`;
+    if (f.also) {
+      const al = loginOf(f.also);
+      const aall = [...(al.family || []).map((x) => ({ n: x, fam: true })), ...(al.buddies || []).map((x) => ({ n: x, fam: false }))];
+      const aq = (f.aq || "").trim().toLowerCase();
+      const ashown = aall.filter((p) => !aq || aq.split(/\s+/).every((w) => p.n.toLowerCase().includes(w)));
+      const achips = f.also_partners.map((p, i) => `<span class="chip">${esc(p)}<button type="button" data-arm="${i}" aria-label="Take ${esc(p)} off">×</button></span>`).join("");
+      let ap = `<div class="chips">${achips || `<span class="muted">Nobody chosen yet.</span>`}</div>`;
+      if (aall.length) {
+        ap += `<input type="search" id="f-aq" placeholder="Type a name to narrow the list" value="${esc(f.aq || "")}" aria-label="Search names">
+          <div class="people">${ashown.map((p) => `<button type="button" class="person aperson" data-ap="${esc(p.n)}" aria-pressed="${f.also_partners.includes(p.n)}">${esc(p.n)}${p.fam ? `<span class="tag">FAMILY</span>` : ""}</button>`).join("") || `<p class="muted">Nobody matches. Use "Someone else" below.</p>`}</div>`;
+      } else {
+        ap += `<p class="muted">The app hasn't read ${esc(f.also)}'s buddy list yet. <button class="linkish" id="f-readab" type="button">Read it now</button> (about a minute), or type the name below.</p>`;
+      }
+      ap += `<details style="margin-top:10px" ${aall.length ? "" : "open"}><summary>Someone else (not in the list)</summary>
+         <div class="row" style="margin-top:8px"><input type="text" id="f-aother" placeholder="Full name, as the club site shows it" style="max-width:320px"><button class="btn" id="f-aaddother" type="button">Add</button></div></details>`;
+      h2 += `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><p class="small muted" style="margin-bottom:8px">Who does ${esc(f.also)} play with? Choose ${need === 1 ? "1 person" : "3 people"}; family members are at the top.</p>${ap}</div>`;
+    }
+    h += sec("Also book for another login at the same time?", h2,
+      f.also ? `${esc(f.also)} books its own court at the same time with its own login, next to yours if one is free.`
+             : "Optional: another login books a court at the same time, next to yours if one is free.");
+  }
+
   h += sec("How often?", `<div class="row once-row"><div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>
      <div class="row avail"><button class="btn" id="f-cal" type="button">See Available Courts</button></div></div>`,
     "See Available Courts shows every court for the day. Press an open court there to use its date and time here.");
@@ -665,11 +694,12 @@ function renderForm(el) {
   el.querySelectorAll(".choice[data-k]").forEach((b) => (b.onclick = () => {
     const k = b.dataset.k, v = JSON.parse(b.dataset.v);
     f[k] = v;
-    if (k === "play") { f.partners = f.partners.slice(0, needOf(f)); if (v === "machine") f.courts = f.courts.filter((c) => MACHINE_COURTS.includes(c)); }
-    if (k === "login") f.partners = [];
+    if (k === "play") { f.partners = f.partners.slice(0, needOf(f)); if (v === "machine") { f.courts = f.courts.filter((c) => MACHINE_COURTS.includes(c)); f.also = ""; f.also_partners = []; } }
+    if (k === "login") { f.partners = []; if (f.also === v) { f.also = ""; f.also_partners = []; } }
+    if (k === "also") { f.also_partners = []; f.aq = ""; }
     f.errors = []; render();
   }));
-  el.querySelectorAll(".person").forEach((b) => (b.onclick = () => {
+  el.querySelectorAll(".person:not(.aperson)").forEach((b) => (b.onclick = () => {
     const p = b.dataset.p, i = f.partners.indexOf(p);
     if (i >= 0) f.partners.splice(i, 1);
     else if (f.partners.length < need) f.partners.push(p);
@@ -679,8 +709,20 @@ function renderForm(el) {
     f.errors = []; render();
   }));
   el.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { f.partners.splice(+b.dataset.rm, 1); render(); }));
+  el.querySelectorAll("[data-arm]").forEach((b) => (b.onclick = () => { f.also_partners.splice(+b.dataset.arm, 1); render(); }));
+  el.querySelectorAll(".aperson").forEach((b) => (b.onclick = () => {
+    const p = b.dataset.ap, i = f.also_partners.indexOf(p);
+    if (i >= 0) f.also_partners.splice(i, 1);
+    else if (f.also_partners.length < need) f.also_partners.push(p);
+    else if (need === 1) f.also_partners = [p];
+    else { toast(`Doubles has 3 others. Take someone off first.`); return; }
+    if (f.also_partners.length === need) f.aq = "";
+    f.errors = []; render();
+  }));
   const qi = $("#f-q");
   if (qi) qi.oninput = () => { f.q = qi.value; const pos = qi.selectionStart; render(); const n2 = $("#f-q"); n2.focus(); n2.setSelectionRange(pos, pos); };
+  const aqi = $("#f-aq");
+  if (aqi) aqi.oninput = () => { f.aq = aqi.value; const pos = aqi.selectionStart; render(); const a2 = $("#f-aq"); a2.focus(); a2.setSelectionRange(pos, pos); };
   const addOther = () => {
     const v = $("#f-other").value.trim().replace(/\s+/g, " ");
     if (v.split(" ").length < 2) { toast("Type their first and last name.", true); return; }
@@ -689,6 +731,15 @@ function renderForm(el) {
     render();
   };
   if ($("#f-addother")) { $("#f-addother").onclick = addOther; $("#f-other").onkeydown = (e) => { if (e.key === "Enter") addOther(); }; }
+  const addAOther = () => {
+    const v = $("#f-aother").value.trim().replace(/\s+/g, " ");
+    if (v.split(" ").length < 2) { toast("Type their first and last name.", true); return; }
+    if (f.also_partners.length >= need) { if (need === 1) f.also_partners = []; else { toast("Doubles has 3 others. Take someone off first."); return; } }
+    if (!f.also_partners.includes(v)) f.also_partners.push(v);
+    render();
+  };
+  if ($("#f-aaddother")) { $("#f-aaddother").onclick = addAOther; $("#f-aother").onkeydown = (e) => { if (e.key === "Enter") addAOther(); }; }
+  if ($("#f-readab")) $("#f-readab").onclick = () => runJob({ kind: "buddies", login: f.also });
   if ($("#f-readb")) $("#f-readb").onclick = () => runJob({ kind: "buddies", login: f.login });
   if ($("#f-readf")) $("#f-readf").onclick = () => familyJob(f.login);
   if ($("#f-date")) $("#f-date").onchange = (e) => { f.date = e.target.value || null; render(); };
@@ -782,9 +833,10 @@ async function bookNow() {
   const f = form, ws = windowState(f);
   if (!ws.nowOk) return;
   const day = new Date(ws.nowDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
+  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}${f.also ? ` (${f.also} books a court at the same time)` : ""}. The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
   if (!ok) return;
-  const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners, date: ws.nowDate,
+  const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
+    also: f.also || "", also_partners: f.also_partners || [], date: ws.nowDate,
     time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   const j = await runJob(body);
   if (j && j.ok) { form = null; view = "home"; }
@@ -822,7 +874,8 @@ window.addEventListener("message", (e) => {
 
 async function saveForm() {
   const f = form;
-  const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners, weekly: f.weekly, day: f.day, date: f.date,
+  const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
+    also: f.also || "", also_partners: f.also_partners || [], weekly: f.weekly, day: f.day, date: f.date,
     time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   $("#f-save").disabled = true;
   const r = await api("/api/booking", body);

@@ -135,3 +135,35 @@ def test_next_runs_skip_dates(tmp_path):
     b = cfg.bookings[0]
     runs = b.next_runs(clubtime.slot_start(date(2026, 12, 1), 0), count=2)
     assert [r.day for r in runs] == [date(2026, 12, 8), date(2026, 12, 22)]
+
+
+ALSO = """\
+    also:
+      - login: partner
+        partners: [Andrea Kronberg, Dan Ford, Eli Grant]
+"""
+
+
+def test_also_parses_members_and_for_member(tmp_path):
+    p, doc, cfg = load_text(tmp_path, GOOD.replace("    active: true", ALSO + "    active: true"))
+    assert cfg.ok, cfg.errors
+    b = cfg.bookings[0]
+    assert [m.login for m in b.members] == ["me", "partner"]
+    pm = b.for_member(b.members[1])
+    assert (pm.login, pm.also) == ("partner", [])
+    assert pm.partners == ["Andrea Kronberg", "Dan Ford", "Eli Grant"]
+
+
+def test_also_round_trips(tmp_path):
+    p, doc, cfg = load_text(tmp_path, GOOD.replace("    active: true", ALSO + "    active: true"))
+    config.save(doc, p)
+    _, cfg2 = config.load(p)
+    assert cfg2.ok, cfg2.errors
+    assert [(m.login, m.partners) for m in cfg2.bookings[0].members[1:]] == [
+        ("partner", ["Andrea Kronberg", "Dan Ford", "Eli Grant"])]
+
+
+def test_also_unknown_login_is_an_error(tmp_path):
+    text = GOOD.replace("    active: true", ALSO.replace("login: partner", "login: nobody") + "    active: true")
+    _, _, cfg = load_text(tmp_path, text)
+    assert any("no login called" in e and "nobody" in e for e in cfg.errors)

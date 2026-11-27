@@ -143,6 +143,10 @@ class FakeSite:
         self.calls.append("release")
         self.staged = None
 
+    async def close(self) -> None:
+        self.calls.append("close")
+        self.closed = True
+
     async def slot_still_open(self, slot):
         self.calls.append("grid")
         self.pending_unknown = False

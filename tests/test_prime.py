@@ -88,7 +88,7 @@ def test_split_booking_runs_both_parts(tmp_path, monkeypatch):
     toasts, ran = [], []
     monkeypatch.setattr(notify, "toast", lambda t, m: toasts.append((t, m)))
 
-    async def fake_run(cfg_, pb, occ, login, log):
+    async def fake_run(cfg_, pb, occ, login, log, first_courts=None):
         ran.append((pb.time, pb.length, list(pb.courts), occ.day))
         return RunResult("booked", f"Booked: Ct {pb.courts[0]}", slot=Slot(occ.day.strftime("%m/%d/%Y"), pb.time,
                                                                         pb.length, pb.courts[0]))
@@ -117,8 +117,8 @@ def test_split_booking_runs_both_parts(tmp_path, monkeypatch):
 def test_prime_part_follows_the_first_part(tmp_path, monkeypatch):
     monkeypatch.setenv("WACB_HOME", str(tmp_path))
     day = date(2026, 12, 7)
-    assert runner.main_part_court("b", day) is None
+    assert runner.main_part_court("b", day, "me", "me") is None
     results.record("run", "b", "booked", "Booked", part="main", day=day.isoformat(), court=4)
-    assert runner.main_part_court("b", day) == 4
+    assert runner.main_part_court("b", day, "me", "me") == 4
     results.record("run", "b", "not_booked", "Not booked", part="main", day=(day + timedelta(days=7)).isoformat())
-    assert runner.main_part_court("b", day + timedelta(days=7)) is None
+    assert runner.main_part_court("b", day + timedelta(days=7), "me", "me") is None

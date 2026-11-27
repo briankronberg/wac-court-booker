@@ -200,7 +200,8 @@ def day_conflict(rows: list[dict], date: str, start: int, end: int) -> str | Non
 
 class Engine:
     def __init__(self, booking: Booking, occ: clubtime.Occurrence, site: Site, clock: Clock,
-                 timing: Timing | None = None, log: Callable[[str], None] | None = None):
+                 timing: Timing | None = None, log: Callable[[str], None] | None = None,
+                 chooser: Callable | None = None, first_court: int | None = None):
         self.b = booking
         self.occ = occ
         self.site = site
@@ -214,6 +215,8 @@ class Engine:
         self.lines: list[str] = []
         self.attempts: list[dict] = []
         self._forced_at = -1e9
+        self.chooser = chooser        # replaces pick (coordinated logins share a Group)
+        self.first_court = first_court  # this login's court from an earlier part, if it has one
 
     # ------------------------------------------------------------ helpers
     def log(self, msg: str) -> None:
@@ -259,6 +262,14 @@ class Engine:
         open_by_len = await self.site.find_open(self.date, self.b.time, self.b.lengths, self.b.site_play)
         summary = {L: sorted(v) for L, v in open_by_len.items()}
         self.log(f"open courts by length: {summary}")
+        if self.first_court is not None:
+            # the court an earlier part got goes first: back-to-back and Prime Time sit next to it
+            for L in self.b.lengths:
+                s = (open_by_len.get(L) or {}).get(self.first_court)
+                if s is not None and (self.first_court, L) not in self.tried:
+                    return s
+        if self.chooser is not None:
+            return self.chooser(open_by_len, self.b, self.tried)
         return pick(open_by_len, self.b, self.tried)
 
     async def stage_best(self, deadline: float) -> bool:
