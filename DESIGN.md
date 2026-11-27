@@ -107,7 +107,7 @@ The club's FAQ: Prime Time is Monday-Friday 9:00-10:30 AM and Monday-Thursday 5:
 ## Court availability (one-off dates)
 
 - The club's court sheet is drawn in the browser from its JSON web service, `Library/OlsService.asmx` (POST, JSON body, the signed-in session's cookies). `ClubSite.api()` calls it with `fetch` from the signed-in page. The calls the app uses (all read-only):
-  - `GetSchedulerResourceAvailability {siteId, resourceIds, selectedDate}`: per court, 1440 `{TimeId, IsAvailable}` minutes plus `BookingDetails` (member reservations; their names are never kept).
+  - `GetSchedulerResourceAvailability {siteId, resourceIds, selectedDate}`: per court, 1440 `{TimeId, IsAvailable}` minutes plus `BookingDetails` (member reservations, each with `HostName`, the club's short form: up to 3 letters of the last name and the first initial). The calendar shows it as an initial and last name, with the full last name when exactly one person in the buddy list, family or the login itself fits it (`runner.short_name`). Names go only to the calendar window: never to the log, results or notifications.
   - `GetServiceAvailability {serviceUniqueId, selectedDate}`: when a service is offered (doubles all day; singles and ball machines split at Prime Time into separate services).
   - `GetSiteAvailability {siteId, selectedDate}`: the club's hours.
   - `GetSchedulerProviderAvailability {siteId, providerIds, selectedDate}`: ball machines, which are "providers" (regular 121, Genie 442).

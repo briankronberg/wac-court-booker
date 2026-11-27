@@ -56,7 +56,7 @@ tr.prime th.time { background: var(--prime); color: var(--prime-ink); }
 tr.prime th.time small { display: block; font-weight: 500; font-size: .7rem; }
 td { padding: 3px; }
 td.sep { border-left: 2px solid var(--line); }
-.cell { border-radius: 7px; padding: 6px 2px; font-size: .82rem; font-weight: 600; border: 1px solid transparent; }
+.cell { border-radius: 7px; padding: 6px 3px; font-size: .82rem; font-weight: 600; border: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.cell { width: 100%; cursor: pointer; }
 .cell.open { background: var(--open); color: var(--open-ink); border-color: var(--open-line); }
 button.cell.open:hover { filter: brightness(.95); }
@@ -82,7 +82,7 @@ tr.mine td .cell { box-shadow: inset 0 0 0 2px var(--mine); }
 </div></header>
 <main>
   <p class="muted small" id="status"></p>
-  <div class="legend"><span class="l-open">Open</span><span class="l-taken">Booked by a member</span><span class="l-blocked">Blocked (lesson, league, event or closed)</span><span class="l-prime">Prime Time (singles and ball machines book 24 hours ahead)</span><span class="l-machine">Ball machine free</span><span class="l-mine" id="lg-mine" hidden>Your time</span></div>
+  <div class="legend"><span class="l-open">Open</span><span class="l-taken">Booked (by whom)</span><span class="l-blocked">Blocked (lesson, league, event or closed)</span><span class="l-prime">Prime Time (singles and ball machines book 24 hours ahead)</span><span class="l-machine">Ball machine free</span><span class="l-mine" id="lg-mine" hidden>Your time</span></div>
   <div id="body"></div>
 </main>
 <script>
@@ -142,10 +142,11 @@ function draw(data) {
     const mine = mineStart !== null && m >= mineStart && m < mineStart + mineLen;
     const cells = courts.map((c) => {
       const st = data.cells[String(c)][String(m)];
-      const tip = `Court ${c} at ${fmtTime(m)}: ${WORD[st].toLowerCase()}`;
+      const who = st === "booked" ? ((data.who || {})[String(c)] || {})[String(m)] : "";
+      const tip = `Court ${c} at ${fmtTime(m)}: ${who ? `booked by ${who}` : WORD[st].toLowerCase()}`;
       return st === "open"
         ? `<td><button type="button" class="cell open" data-c="${c}" data-m="${m}" title="${tip}. Press to use this time.">Open</button></td>`
-        : `<td><div class="cell ${st}" title="${tip}">${WORD[st]}</div></td>`;
+        : `<td><div class="cell ${st}" title="${esc(tip)}">${who ? esc(who) : WORD[st]}</div></td>`;
     }).join("");
     const mcells = machines.map((k, i) => (data.machines[k] || []).includes(m)
       ? `<td class="${i ? "" : "sep"}"><div class="cell free" title="${esc(data.machine_labels[k])} free at ${fmtTime(m)}">Free</div></td>`

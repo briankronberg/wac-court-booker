@@ -39,7 +39,8 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
 - 30, 60 or 90 minutes, optionally falling back to shorter at the same start time.
 - Courts in order of preference (press them in order), optionally followed by any other court.
 - Weekly on a day, or a one-off date, with skip dates.
-  - **See Available Courts** (next to **Just once**) opens a window with every court for the day you chose (or today), half hour by half hour: open, booked, or blocked for a lesson or event, with Prime Time marked, your time outlined, and when each ball machine is free. Press an open court to put that date, time and court into your booking. It has a date box, day before and day after, and **Refresh**.
+  - **See Available Courts** (next to **Just once**) opens a window with every court for the day you chose (or today), half hour by half hour: open, booked (with who booked it), or blocked for a lesson or event, with Prime Time marked, your time outlined, and when each ball machine is free. Press an open court to put that date, time and court into your booking. It has a date box, day before and day after, and **Refresh**.
+    The club gives only the first letters of a booker's last name. You, your buddies and your family show with the full last name (first initial and last name); anyone else shows as the club gives it, such as "A. Smi…".
   - **Validate booking** (next to **Save booking**) checks the club's court sheet and says which courts are free at your time right now, and whether your first choice is one of them. For a weekly booking it checks the next date it will book.
   - Both only read the court sheet; nothing is booked.
 - Booked by any of the club logins you've added on this PC.

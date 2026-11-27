@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2
+
+- **See Available Courts shows who booked each court.** Instead of "Booked", a booked half hour shows the booker as a first initial and last name. The club gives only the first few letters of the last name, so you, your buddies and your family show in full and anyone else shows as the club gives it, such as "A. Smi…". Point at a cell for its full text.
+
 ## 0.4.1
 
 - **A day you've already filled is caught.** The club allows 2 reservations per login per day and won't take one that overlaps your own. The club site turns such a booking away without saying why, so the app used to keep trying and end with a vague "didn't accept in time". Now a booking checks your reservations for that day first and, if the day is full or the time clashes, stops and says so. **Validate booking** warns about it too, and the menu's test booking skips such days.
