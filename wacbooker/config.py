@@ -93,6 +93,15 @@ class Part:
 
 
 @dataclass
+class Member:
+    """One login in a booking and the partners it books with. A booking's first member
+    is its own `login` and `partners`; `also` adds more logins that book at the same
+    time, each on its own court, side by side when the courts allow."""
+    login: str
+    partners: list[str]
+
+
+@dataclass
 class Booking:
     name: str
     login: str
@@ -107,6 +116,16 @@ class Booking:
     skip: list[date] = field(default_factory=list)
     active: bool = True
     machine: str | None = None   # play: machine only
+    also: list[Member] = field(default_factory=list)  # more logins booking together
+
+    @property
+    def members(self) -> list[Member]:
+        """Every login this booking books for, its own login first."""
+        return [Member(self.login, list(self.partners))] + list(self.also)
+
+    def for_member(self, m: Member) -> "Booking":
+        """This booking as one login books it."""
+        return replace(self, login=m.login, partners=list(m.partners), also=[])
 
     @property
     def what(self) -> str:
@@ -132,6 +151,16 @@ class Booking:
     @property
     def end(self) -> int:
         return self.time + self.length
+
+    @property
+    def span_end(self) -> int:
+        """When the whole booking is over (with a second session, its end)."""
+        return self.end
+
+    @property
+    def reservations(self) -> int:
+        """How many reservations each login gets on the day (the club allows 2)."""
+        return len(self.parts)
 
     @property
     def weekday(self) -> int | None:
@@ -169,8 +198,11 @@ class Booking:
         courts = ", ".join(str(c) for c in self.courts)
         extra = ", shorter ok" if self.shorter_ok else ""
         who = f" with {', '.join(self.partners)}" if self.partners else ""
+        more = "".join(f"; also login {m.login}" + (f" with {', '.join(m.partners)}" if m.partners else "")
+                       for m in self.also)
         return (f"{when} {clubtime.fmt_time(self.time)}, {self.length} min{extra}, "
-                f"{self.what.lower() if self.play != 'machine' else self.what}{who}; courts {courts}; login {self.login}")
+                f"{self.what.lower() if self.play != 'machine' else self.what}{who}; courts {courts}; "
+                f"login {self.login}{more}")
 
     def occurrences(self, after: datetime, count: int = 1, part: str = "main") -> list[clubtime.Occurrence]:
         p = self.part(part)
@@ -246,7 +278,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
     if not name:
         errs.append(f"{label}: needs a name.")
     known = {"name", "login", "play", "partners", "day", "date", "time", "length", "shorter_ok",
-             "courts", "skip", "active", "machine"}
+             "courts", "skip", "active", "machine", "also"}
     for k in raw:
         if k not in known:
             errs.append(f"{label}: '{k}' isn't a setting I know. Check the spelling.")
@@ -281,6 +313,40 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
                     f"but {len(partners)} {'is' if len(partners) == 1 else 'are'} listed.")
     if len({p.lower() for p in partners}) != len(partners):
         errs.append(f"{label}: a partner is listed twice.")
+
+    also: list[Member] = []
+    also_raw = raw.get("also") or []
+    if isinstance(also_raw, dict):
+        also_raw = [also_raw]
+    if not isinstance(also_raw, list):
+        errs.append(f"{label}: 'also' should be a list of logins, each with its partners.")
+        also_raw = []
+    if also_raw and play == "machine":
+        errs.append(f"{label}: a ball machine booking is for one login; take 'also' out.")
+        also_raw = []
+    for j, a in enumerate(also_raw, 1):
+        if not isinstance(a, dict) or not str(a.get("login") or "").strip():
+            errs.append(f"{label}: 'also' entry {j} needs a login.")
+            continue
+        for k in a:
+            if k not in ("login", "partners"):
+                errs.append(f"{label}: 'also' entry {j}: '{k}' isn't a setting I know.")
+        ap = a.get("partners") or []
+        if isinstance(ap, str):
+            ap = [ap]
+        ap = [" ".join(str(p).split()) for p in ap if str(p).strip()]
+        al = str(a["login"]).strip()
+        if play in PARTNERS_FOR and len(ap) != PARTNERS_FOR[play]:
+            n = PARTNERS_FOR[play]
+            errs.append(f"{label}: login '{al}' plays {play} too, so it needs {n} partner{'s' if n > 1 else ''}, "
+                        f"but {len(ap)} {'is' if len(ap) == 1 else 'are'} listed.")
+        also.append(Member(al, ap))
+    logins_in = [login] + [m.login for m in also]
+    if len({x.lower() for x in logins_in}) != len(logins_in):
+        errs.append(f"{label}: a login is listed twice. Each login books its own court once.")
+    people = [p.lower() for p in partners] + [p.lower() for m in also for p in m.partners]
+    if len(set(people)) != len(people):
+        errs.append(f"{label}: someone is a partner for two logins. Each person can be on one court only.")
 
     day = one_off = None
     if raw.get("day") is not None and raw.get("date") is not None:
@@ -353,7 +419,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
         return None
     return Booking(name=name, login=login, play=play, partners=partners, time=minutes,
                    length=length, courts=courts, day=day, date=one_off, shorter_ok=shorter_ok,
-                   skip=skip, active=active, machine=machine)
+                   skip=skip, active=active, machine=machine, also=also)
 
 
 def _days_overlap(a: Booking, b: Booking) -> bool:
@@ -377,29 +443,37 @@ def check(cfg: Config, now: datetime | None = None) -> None:
         if names.count(n) > 1:
             cfg.errors.append(f"Two bookings are called '{n}'. Names must be different.")
     for b in cfg.bookings:
-        if not cfg.login(b.login):
-            cfg.errors.append(f"Booking '{b.name}': there's no login called '{b.login}'.")
+        for m in b.members:
+            if not cfg.login(m.login):
+                cfg.errors.append(f"Booking '{b.name}': there's no login called '{m.login}'.")
     active = [b for b in cfg.bookings if b.active]
+
+    def logins_of(x: Booking) -> set[str]:
+        return {m.login for m in x.members}
     for i, a in enumerate(active):
         for b in active[i + 1:]:
-            if a.login != b.login or not _days_overlap(a, b):
+            shared = logins_of(a) & logins_of(b)
+            if not shared or not _days_overlap(a, b):
                 continue
-            if a.time < b.end and b.time < a.end:
-                cfg.errors.append(f"Bookings '{a.name}' and '{b.name}' overlap on the same login.")
+            if a.time < b.span_end and b.time < a.span_end:
+                cfg.errors.append(f"Bookings '{a.name}' and '{b.name}' overlap on the same login "
+                                  f"('{sorted(shared)[0]}').")
     # The club allows 2 reservations per login per day.
     seen: set[tuple] = set()
     for b in active:
-        key = (b.login, b.day, b.date)
-        if key in seen:
-            continue
-        same = [x for x in active if x.login == b.login and _days_overlap(x, b)]
-        # A booking split at Prime Time makes two reservations.
-        if sum(len(x.parts) for x in same) > PER_DAY_CAP:
-            seen.add(key)
-            when = clubtime.DAYS[b.day] if b.day is not None else f"{b.date:%m/%d/%Y}"
-            cfg.warnings.append(
-                f"Login '{b.login}' has {sum(len(x.parts) for x in same)} reservations on {when}; "
-                f"the club allows {PER_DAY_CAP} per login per day, so the later ones will be turned away.")
+        for lg in sorted(logins_of(b)):
+            key = (lg, b.day, b.date)
+            if key in seen:
+                continue
+            same = [x for x in active if lg in logins_of(x) and _days_overlap(x, b)]
+            # A booking split at Prime Time, or with a second session, makes two reservations.
+            n = sum(x.reservations for x in same)
+            if n > PER_DAY_CAP:
+                seen.add(key)
+                when = clubtime.DAYS[b.day] if b.day is not None else f"{b.date:%m/%d/%Y}"
+                cfg.warnings.append(
+                    f"Login '{lg}' has {n} reservations on {when}; the club allows {PER_DAY_CAP} "
+                    f"per login per day, so the later ones will be turned away.")
     for b in active:
         if b.date and not b.next_runs(now - clubtime.LATE_OK, 1):
             cfg.warnings.append(f"Booking '{b.name}' ({b.date:%m/%d/%Y}) is past its booking "
@@ -508,6 +582,14 @@ def booking_to_map(b: Booking) -> CommentedMap:
     if b.play == "machine":
         m["machine"] = b.machine or "either"
     m["partners"] = _flow(b.partners)
+    if b.also:
+        seq = CommentedSeq()
+        for x in b.also:
+            e = CommentedMap()
+            e["login"] = x.login
+            e["partners"] = _flow(x.partners)
+            seq.append(e)
+        m["also"] = seq
     if b.day is not None:
         m["day"] = clubtime.DAYS[b.day]
     else:

@@ -395,8 +395,9 @@ class ClubSite:
                 self.page = await self.ctx.new_page()
             else:
                 channel = {"edge": "msedge", "chrome": "chrome"}[self.browser]
-                prof = paths.profile_dir(self.browser)
+                prof = paths.profile_dir(self.browser, f"{self.username}-{os.getpid()}-{id(self) % 100000}")
                 prof.mkdir(parents=True, exist_ok=True)
+                self._profile = prof
                 self.ctx = await self.pw.chromium.launch_persistent_context(
                     str(prof), channel=channel, headless=not self.show_window,
                     viewport={"width": 1440, "height": 900})
@@ -433,6 +434,10 @@ class ClubSite:
         except Exception:  # noqa: BLE001
             pass
         self.pw = self.ctx = self.br = self.page = None
+        prof, self._profile = getattr(self, "_profile", None), None
+        if prof is not None:  # a throwaway profile: sign-in is fresh every run anyway
+            import shutil
+            shutil.rmtree(prof, ignore_errors=True)
 
     async def js(self, expr: str, arg=None, timeout: float = 15):
         try:
