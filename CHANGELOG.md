@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.3
+
+- **Fix:** when two logins book together and the club site hiccups for one of them while getting ready, that login gave up without saying why instead of trying again. It now tries again on its own court.
+
 ## 0.6.2
 
 - **Fix:** on dates with a one-digit month or day (like 12/4), the app didn't recognise your own reservations in the club's list, which writes such dates without a leading zero. The guard court wasn't cancelled after your booking, the 2-a-day check missed reservations you already had, and the check after an unanswered press could miss a booking. All three now read the club's dates correctly.

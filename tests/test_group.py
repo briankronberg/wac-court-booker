@@ -76,3 +76,20 @@ def test_release_gives_the_court_back():
     got = g.chooser(0)(open_map(5, 6), b(), set())
     assert got.court == 5
     assert g.want == {0: 5}
+
+
+def test_a_member_can_pick_again_after_a_glitch():
+    from wacbooker import config
+    from wacbooker.engine import Slot
+    from wacbooker.group import Group
+    errs = []
+    b = config.parse_booking({"name": "g", "login": "me", "play": "singles", "partners": ["A B"],
+                              "date": "2026-12-04", "time": "3:00 PM", "length": 60,
+                              "courts": [3, 10, "any"]}, 1, errs)
+    assert not errs, errs
+    obl = {60: {3: Slot("12/04/2026", 900, 60, 3), 10: Slot("12/04/2026", 900, 60, 10)}}
+    g = Group(2)
+    assert g.pick(0, obl, b, set()).court == 3
+    assert g.pick(1, obl, b, set()).court == 10
+    assert g.pick(0, obl, b, set()).court == 3   # the retry keeps its own court
+    assert g.pick(1, obl, b, set()).court == 10

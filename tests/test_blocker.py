@@ -464,6 +464,9 @@ def test_group_member_crash_still_settles_the_others(tmp_path, monkeypatch):
     g = guards["me"]
     assert [(x.start, x.length, x.court) for x in sites2["me"].cancelled] == [(17 * 60, g.length, g.court)]
     assert sites2["other"].cancelled == []  # its guard is kept: its outcome is unknown
+    msg = toasts[-1][1]
+    assert "other: other:" not in msg
+    assert "boom" not in msg and "unexpected error" in msg and "club site" in msg
 
 
 def test_backstop_cancels_a_guard_the_booking_never_settled(tmp_path, monkeypatch):
