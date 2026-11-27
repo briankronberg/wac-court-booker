@@ -40,7 +40,7 @@ On a booking day there's nothing to do. A notification tells you how it went, fo
 - Courts in order of preference (press them in order), optionally followed by any other court.
 - Weekly on a day, or a one-off date, with skip dates.
   - **See Available Courts** (next to **Just once**) opens a window with every court for the day you chose (or today), half hour by half hour: open, booked (with who booked it), or blocked for a lesson or event, with Prime Time marked, your time outlined, and when each ball machine is free. Press an open court to put that date, time and court into your booking. It has a date box, day before and day after, and **Refresh**.
-    The club gives only the first letters of a booker's last name. You, your buddies and your family show with the full last name (first initial and last name); anyone else shows as the club gives it, such as "A. Smi…".
+    The club gives only the first letters of a booker's last name. You, your buddies and your family show with the full last name (first initial and last name); anyone else shows as the club gives it, such as "A. Smi…". Press a booked court to say who it is: type their first and last name once and the calendar shows it on all their bookings from then on. The name has to fit what the club shows (for "Smi, A.", a first name starting with A and a last name starting with Smi), which catches typos. Leave it empty to forget a name.
   - **Validate booking** (next to **Save booking**) checks the club's court sheet and says which courts are free at your time right now, and whether your first choice is one of them. For a weekly booking it checks the next date it will book.
   - Both only read the court sheet; nothing is booked.
 - Booked by any of the club logins you've added on this PC.
@@ -97,6 +97,7 @@ For Edge and Chrome, `show_window: true` shows the window, which is handy for wa
 | `logs\wac-booker.log` | Everything each run did |
 | `results.jsonl` | One line per run ("What happened" shows them) |
 | `buddies.json` | Buddy names read from the club site |
+| `players.json` | Names you gave to bookers in **See Available Courts** |
 | `venv\`, `browsers\` | The app and its browser |
 
 Passwords live only in Windows Credential Manager, under "WAC Court Booker".

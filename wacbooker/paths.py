@@ -40,6 +40,11 @@ def buddies_file() -> Path:
     return home() / "buddies.json"
 
 
+def players_file() -> Path:
+    """Full names you've given to bookers in the calendar, by their club id."""
+    return home() / "players.json"
+
+
 def browsers_dir() -> Path:
     """Playwright's own Chromium, downloaded by setup."""
     return home() / "browsers"

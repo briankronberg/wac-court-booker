@@ -66,7 +66,7 @@ def test_day_availability_combines_court_service_and_club_hours():
     av = asyncio.run(site.day_availability("12/04/2026", machines=True))
     assert set(av["courts"]) == {2, 3, 4, 5, 6, 8, 9, 10}
     assert S.free_for(av["courts"][8], 1290, 30) and not S.free_for(av["courts"][8], 1320, 30)  # club closes at 10
-    assert not S.free_for(av["courts"][3], 480, 30) and av["booked"][3] == [(480, 540, "Not Shown")]
+    assert not S.free_for(av["courts"][3], 480, 30) and av["booked"][3] == [(480, 540, "Not Shown", 1)]
     # The Genie is free outside its own bookings, in either its regular or Prime Time service.
     assert S.free_for(av["machines"]["genie"], 540, 60) and not S.free_for(av["machines"]["genie"], 420, 30)
     sent = [p for m, p in site.calls if m == "GetSchedulerResourceAvailability"][0]
