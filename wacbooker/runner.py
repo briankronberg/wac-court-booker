@@ -223,15 +223,18 @@ def run_booking(name: str, part: str = "main") -> int:
                 keep_awake(True)
                 try:
                     out = asyncio.run(_guard_async(cfg, b, occ, log))
+                    rc = _finish_guard(b, occ, out, log)
+                    if any(r.booked for r in out.values()):
+                        asyncio.run(_guard_backstop(cfg, b, occ, log))
                 finally:
                     keep_awake(False)
         except RuntimeError as e:
             msg = f"Not booked: {e}."
             log(msg)
-            results.record("run", name, "not_booked", msg, part=part, day=occ.day.isoformat())
+            results.record("run", name, "not_booked", msg, part="blocker-not-started", day=occ.day.isoformat())
             notify.toast("Not booked", msg)
             return 1
-        return _finish_guard(b, occ, out, log)
+        return rc
     guards = None
     if part == "main" and b.blocker:
         # Looked up after the wait: the guard run may still be going when this task starts.
@@ -304,7 +307,13 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
         first = guard.court if guard else (first_courts or {}).get(login.nickname)
         if first is not None and not guard:
             log(f"second session; the first part got court {first}, so it goes first")
-        res = await Engine(b, occ, site, rc, log=log, first_court=first).run()
+        try:
+            res = await Engine(b, occ, site, rc, log=log, first_court=first).run()
+        except Exception as e:  # noqa: BLE001 -- a crash must still leave a result (and keep the guard)
+            from .engine import RunResult
+            log(f"unexpected error: {type(e).__name__}: {e}")
+            res = RunResult("unsure", f"Not sure: the booking stopped with an unexpected error "
+                                      f"({type(e).__name__}). Check your reservations on the club site.")
         await settle_guard(site, guard, res, b.name, occ.day, login.nickname, log)
         if res.status == "not_booked":
             await site.release()
@@ -322,6 +331,9 @@ async def run_group(cfg: Config, b: Booking, occ: clubtime.Occurrence, clock, lo
     from .engine import RunResult
     from .group import Group
     group = Group(len(b.members))
+    for i, m in enumerate(b.members):  # courts the logins already hold (guard or first part) aren't for the others
+        if first_courts and first_courts.get(m.login) is not None:
+            group.want[i] = first_courts[m.login]
 
     async def one(i: int):
         member = b.members[i]
@@ -333,14 +345,16 @@ async def run_group(cfg: Config, b: Booking, occ: clubtime.Occurrence, clock, lo
         eng = Engine(b.for_member(member), occ, site, clock, log=log, chooser=group.chooser(i),
                      first_court=first_courts.get(member.login) if first_courts else None)
         try:
-            res = await eng.run()
+            try:
+                res = await eng.run()
+            except Exception as e:  # noqa: BLE001 -- a crash must still settle the guard (kept)
+                res = RunResult("unsure", f"{member.login}: {e}")
             await settle_guard(site, (guards or {}).get(member.login), res, b.name, occ.day,
                                member.login, log)
-        except SiteError as e:
-            res = RunResult("unsure", f"{member.login}: {e}")
         finally:
             if res.status == "not_booked":
                 await site.release()
+                group.release(i)
             keep_family(lg, site)
             await site.close()
         return res
@@ -373,8 +387,13 @@ def _finish_group(b: Booking, part: str, occ: clubtime.Occurrence, out: dict, lo
 
 # ---------------------------------------------------------------- blockers (guard slots)
 
+# How long after the main window the guard run checks back: the main window, plus late
+# starts of up to 20 minutes, plus its few minutes of pressing.
+BACKSTOP_AFTER = timedelta(minutes=25)
+
+
 def plan_blocker(avail: dict, day, now: datetime, main_start: int, court_order: list,
-                 main_length: int = 30) -> tuple[int, int, int] | None:
+                 main_length: int = 30, prime_weekday: int | None = None) -> tuple[int, int, int] | None:
     """Where the guard slot goes: (court, start, length), or None. The old system's rule:
     the earliest of main - 60 and main - 30 that is free right up to the main start, on a
     court that is also free when play starts. Courts in preference order: the named
@@ -385,6 +404,8 @@ def plan_blocker(avail: dict, day, now: datetime, main_start: int, court_order: 
         start = main_start - length
         if start < site_mod.FIRST_START:
             continue
+        if prime_weekday is not None and any(p.prime for p in clubtime.split_prime(prime_weekday, start, length)):
+            continue  # singles' Prime Time opens only 24 hours ahead, so a week-ahead guard can't book there
         for c in order:
             sheet = past_cut(avail["courts"].get(c) or [False] * site_mod.DAY_MINUTES, day, now)
             if site_mod.free_for(sheet, start, length) and site_mod.free_for(sheet, main_start, main_length):
@@ -407,6 +428,16 @@ def guard_slot(name: str, day, login: str, own: str) -> Slot | None:
     return None
 
 
+def guard_settled(name: str, day, login: str, own: str) -> str | None:
+    """The latest 'blocker-cancel' status for `login`'s guard slot on `day`
+    ('cancelled', 'failed' or 'kept'), or None if no run has settled it."""
+    for r in reversed(results.recent(300)):
+        if (r.get("kind") == "run" and r.get("booking") == name and r.get("day") == day.isoformat()
+                and r.get("login", own) == login and r.get("part") == "blocker-cancel"):
+            return r.get("status")
+    return None
+
+
 async def settle_guard(site, guard: Slot | None, res, name: str, day, login: str, log) -> None:
     """After the booking's outcome, in the same session: cancel the guard slot (a week
     ahead, so it's free). If the outcome is unknown, keep it, in case the booking went
@@ -417,6 +448,8 @@ async def settle_guard(site, guard: Slot | None, res, name: str, day, login: str
     if res.status == "unsure":
         note = (f" Kept {what} in case this booking went through: check the club site and "
                 f"cancel it there if you don't need it.")
+        results.record("run", name, "kept", note.strip(), part="blocker-cancel",
+                       day=day.isoformat(), login=login)
     else:
         try:
             await site.cancel(guard)
@@ -475,7 +508,8 @@ async def _guard_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, log) -
             order = [c for c in order if c not in claimed]
             if claimed:  # coordinated logins: next to a guard slot already planned
                 order.sort(key=lambda c: not any(abs(c - o) == 1 for o in claimed))
-            plan = plan_blocker(avail, occ.day, clubtime.now_central(), main.time, order, main_length)
+            plan = plan_blocker(avail, occ.day, clubtime.now_central(), main.time, order, main_length,
+                                prime_weekday=occ.day.weekday() if b.play == "singles" else None)
             if plan is None:
                 res = RunResult("not_booked", f"No guard slot: no court is free in the hour before "
                                               f"{clubtime.fmt_time(main.time)} {occ.day:%a %m/%d}.")
@@ -493,6 +527,10 @@ async def _guard_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, log) -
             return res
         except SiteError as e:
             res = RunResult("unsure", f"Guard slot: {e}")
+            return res
+        except Exception as e:  # noqa: BLE001 -- a crash must still leave a result (and keep the guard)
+            log(f"guard slot: unexpected error: {type(e).__name__}: {e}")
+            res = RunResult("unsure", f"Guard slot: unexpected error ({type(e).__name__})")
             return res
         finally:
             if res is not None and res.status == "not_booked":
@@ -527,6 +565,45 @@ def _finish_guard(b: Booking, occ: clubtime.Occurrence, out: dict, log) -> int:
     notify.toast(title, msg)
     log(f"done: {msg}")
     return 0 if all_booked else 1
+
+
+async def _guard_backstop(cfg: Config, b: Booking, occ: clubtime.Occurrence, log) -> None:
+    """The guard run's safety net. If the booking's own run hasn't settled a guard
+    slot by 25 minutes after the main window (paused, skipped, removed, missed or
+    crashed), cancel it here so it's never left on the club site. A guard the main
+    run kept on purpose (its outcome was unknown) is left alone; a failed cancel is
+    tried again."""
+    main = b.part("main")
+    w_main = clubtime.window_open(clubtime.slot_start(occ.day, main.time), main.lead)
+    wait = (w_main + BACKSTOP_AFTER - clubtime.now_central()).total_seconds()
+    if wait > 0:
+        log(f"checking back on the guard slot at {clubtime.fmt_when(w_main + BACKSTOP_AFTER)}")
+        await asyncio.sleep(wait)
+    for m in b.members:
+        g = guard_slot(b.name, occ.day, m.login, b.login)
+        if g is None or guard_settled(b.name, occ.day, m.login, b.login) == "kept":
+            continue
+        what = f"the guard slot ({span(g.start, g.length)} on Ct {g.court})"
+        lg = cfg.login(m.login)
+        site = None
+        try:
+            site = await start_site(cfg, lg, log)
+            await site.login()
+            await site.cancel(g)
+        except SiteError as e:
+            log(f"backstop couldn't cancel the guard slot: {e}")
+            results.record("run", b.name, "failed", str(e)[:200], part="blocker-cancel",
+                           day=occ.day.isoformat(), login=m.login)
+            notify.toast("Check your bookings", f"Couldn't cancel {what}: cancel it on the club site.")
+        else:
+            msg = f"Cancelled {what}: the booking's own run didn't settle it."
+            results.record("run", b.name, "cancelled", msg, part="blocker-cancel",
+                           day=occ.day.isoformat(), login=m.login)
+            notify.toast("Guard slot cancelled", msg)
+        finally:
+            if site is not None:
+                keep_family(lg, site)
+                await site.close()
 
 
 # ---------------------------------------------------------------- book now

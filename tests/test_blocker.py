@@ -144,7 +144,15 @@ def test_plan_blocker_only_guards_a_court_free_for_play():
     assert runner.plan_blocker(_avail({5: [(main, 30)]}), day, now, main, [5, 4, 3], 60) == (4, main - 60, 60)
 
 
-# ------------------------------------------------------------ runner
+def test_plan_blocker_avoids_prime_time_for_singles():
+    now = clubtime.now_central()
+    # Tuesday 8:00 PM: the guard would be 7:00-8:00 or 7:30-8:00 PM, both Prime Time for singles
+    tue = date(2026, 12, 15)
+    assert runner.plan_blocker(_avail({}), tue, now, 20 * 60, [5, 4, 3], prime_weekday=1) is None
+    assert runner.plan_blocker(_avail({}), tue, now, 20 * 60, [5, 4, 3]) == (5, 19 * 60, 60)
+    # Friday 10:30 AM: the guard would be 9:30-10:30 AM, inside Friday's Prime Time
+    fri = date(2026, 12, 18)
+    assert runner.plan_blocker(_avail({}), fri, now, 10 * 60 + 30, [5, 4, 3], prime_weekday=4) is None
 
 
 def _fake_sleep(monkeypatch, clock):
@@ -153,9 +161,14 @@ def _fake_sleep(monkeypatch, clock):
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
 
-def _run_setup(monkeypatch, W, **site_kw):
+async def _no_backstop(*a, **k):
+    return None
+
+
+def _run_setup(monkeypatch, W, backstop=False, **site_kw):
     """A scheduled run at window W (a datetime): fake site, fake clock, toasts captured.
-    Real asyncio.sleep is redirected to the fake clock, so the staging wait is instant."""
+    Real asyncio.sleep is redirected to the fake clock, so the staging wait is instant.
+    The guard backstop is patched out unless backstop=True (in real life it runs after the main)."""
     from wacbooker import clock as clockmod
     Wf = W.timestamp()
     clock = FakeClock(Wf - 75 * 60)
@@ -168,6 +181,8 @@ def _run_setup(monkeypatch, W, **site_kw):
     monkeypatch.setattr(runner, "keep_family", lambda *a: None)
     monkeypatch.setattr(runner, "RealClock", lambda *a, **k: clock)
     monkeypatch.setattr(clockmod, "measure", lambda: (0.0, "test"))
+    if not backstop:
+        monkeypatch.setattr(runner, "_guard_backstop", _no_backstop)
     toasts = []
     monkeypatch.setattr(runner.notify, "toast", lambda t, m: toasts.append((t, m)))
     return site, toasts
@@ -344,6 +359,7 @@ def test_group_guard_books_per_login_and_the_main_run_cancels_each(tmp_path, mon
         monkeypatch.setattr(runner, "start_site", start)
         monkeypatch.setattr(runner, "RealClock", lambda *a, **k: clock)
         monkeypatch.setattr(clockmod, "measure", lambda: (0.0, "test"))
+        monkeypatch.setattr(runner, "_guard_backstop", _no_backstop)
         return sites
 
     sites = sites_for(W_blk)
@@ -398,3 +414,90 @@ def test_book_now_skips_the_guard(tmp_path, monkeypatch):
     assert out == "booked"
     assert [(s.start, s.length, s.court) for s in site.booked] == [(18 * 60, 60, 5)]
     assert site.cancelled == []
+
+
+def test_group_member_crash_still_settles_the_others(tmp_path, monkeypatch):
+    monkeypatch.setenv("WACB_HOME", str(tmp_path))
+    raw = {"name": "b", "login": "me", "play": "singles", "partners": ["Pat Lee"], "day": "Friday",
+           "time": "6:00 PM", "length": 60, "courts": [5, 4, "any"], "blocker": True,
+           "also": [{"login": "other", "partners": ["Sam Ortiz"]}]}
+    errs = []
+    b = config.parse_booking(raw, 1, errs)
+    assert not errs, errs
+    cfg = config.Config(logins=[config.Login("me", "x"), config.Login("other", "y")], bookings=[b])
+    monkeypatch.setattr(config, "load", lambda *a: (None, cfg))
+    monkeypatch.setattr(creds, "has_password", lambda u: True)
+    day = date(2026, 12, 18)
+    W_blk = clubtime.window_open(clubtime.slot_start(day, 17 * 60))
+    W_main = clubtime.window_open(clubtime.slot_start(day, 18 * 60))
+
+    def sites_for(W, crash=None):
+        from wacbooker import clock as clockmod
+        clock = FakeClock(W.timestamp() - 75 * 60)
+        sites = {}
+
+        async def start(c, lg, log):
+            s = FakeSite(clock, W.timestamp(), open_courts={60: [5, 4, 3], 30: [5, 4, 3]})
+            if lg.nickname == crash:
+                async def boom(*a, **k):
+                    raise RuntimeError("boom")
+                s.attempt = boom
+            sites[lg.nickname] = s
+            return s
+        _fake_sleep(monkeypatch, clock)
+        monkeypatch.setattr(runner, "start_site", start)
+        monkeypatch.setattr(runner, "RealClock", lambda *a, **k: clock)
+        monkeypatch.setattr(clockmod, "measure", lambda: (0.0, "test"))
+        monkeypatch.setattr(runner, "_guard_backstop", _no_backstop)
+        return sites
+
+    sites = sites_for(W_blk)
+    toasts = []
+    monkeypatch.setattr(runner.notify, "toast", lambda t, m: toasts.append((t, m)))
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_blk - timedelta(minutes=75))
+    assert runner.run_booking("b", "blocker") == 0
+    guards = {nick: s.booked[0] for nick, s in sites.items()}
+
+    sites2 = sites_for(W_main, crash="other")
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_main - timedelta(minutes=75))
+    assert runner.run_booking("b") == 1  # the other login's outcome is unknown, so not all booked
+    g = guards["me"]
+    assert [(x.start, x.length, x.court) for x in sites2["me"].cancelled] == [(17 * 60, g.length, g.court)]
+    assert sites2["other"].cancelled == []  # its guard is kept: its outcome is unknown
+
+
+def test_backstop_cancels_a_guard_the_booking_never_settled(tmp_path, monkeypatch):
+    _guard_booking(monkeypatch, tmp_path)
+    day = date(2026, 12, 18)
+    W_blk = clubtime.window_open(clubtime.slot_start(day, 17 * 60))
+
+    site, toasts = _run_setup(monkeypatch, W_blk, backstop=True, open_courts={60: [5, 4, 3], 30: [5, 4, 3]})
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_blk - timedelta(minutes=75))
+    assert runner.run_booking("b", "blocker") == 0
+    # the main run never happens: the guard run's own backstop cancels the guard it booked
+    assert [(s.start, s.length, s.court) for s in site.booked] == [(17 * 60, 60, 5)]
+    assert [(s.start, s.length, s.court) for s in site.cancelled] == [(17 * 60, 60, 5)]
+    assert toasts[-1][0] == "Guard slot cancelled"
+
+
+def test_backstop_leaves_a_guard_the_booking_kept(tmp_path, monkeypatch):
+    b, cfg = _guard_booking(monkeypatch, tmp_path)
+    day = date(2026, 12, 18)
+    W_blk = clubtime.window_open(clubtime.slot_start(day, 17 * 60))
+    W_main = clubtime.window_open(clubtime.slot_start(day, 18 * 60))
+
+    site, _ = _run_setup(monkeypatch, W_blk, open_courts={60: [5, 4, 3], 30: [5, 4, 3]})
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_blk - timedelta(minutes=75))
+    assert runner.run_booking("b", "blocker") == 0
+
+    site2, _ = _run_setup(monkeypatch, W_main, open_courts={60: [5, 4, 3], 30: [5, 4, 3]},
+                          unknown_on={2}, report=None, grid_after_unknown=False, forced_only=True)
+    monkeypatch.setattr(clubtime, "now_central", lambda: W_main - timedelta(minutes=75))
+    assert runner.run_booking("b") == 1
+    assert site2.cancelled == []  # kept on purpose: the main outcome was unknown
+
+    occ = b.due(W_blk - timedelta(minutes=75), "blocker")
+    assert occ is not None
+    site3, _ = _run_setup(monkeypatch, W_main, backstop=True, open_courts={60: [5, 4, 3], 30: [5, 4, 3]})
+    asyncio.run(runner._guard_backstop(cfg, b, occ, lambda m: None))
+    assert site3.cancelled == []
