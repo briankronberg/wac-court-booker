@@ -181,7 +181,7 @@ async def _run_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, login: L
     offset = offset or 0.0
     log(f"target {clubtime.fmt_when(occ.start)}, window {occ.window:%m/%d %H:%M:%S} Central; "
         f"PC clock correction {offset:+.2f}s ({src})")
-    rc = RealClock(offset)
+    rc = RealClock(offset, measure=clock.server_offset)
     wait = occ.window.timestamp() - clubtime.STAGE_LEAD.total_seconds() - rc.now()
     if wait > 0:
         log(f"waiting {wait / 60:.0f} min until 15 minutes before the window")
@@ -726,8 +726,10 @@ async def test_booking(cfg: Config, login: Login, play: str, partners: list[str]
         say(f"  Booking {slot.describe()} ...")
         await site.stage(slot)
         outcome = None
-        for _ in range(10):
-            a = await site.attempt(partners)
+        for i in range(10):
+            # The time is already open, so the rows should be on; from the fourth try
+            # press anyway so the club says what's wrong.
+            a = await site.attempt(partners, force=i >= 3)
             log(f"press -> {a.outcome} {a.detail}")
             outcome = a.outcome
             if a.outcome in (CONFIRMED, UNKNOWN):

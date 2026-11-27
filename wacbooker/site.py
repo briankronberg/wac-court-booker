@@ -364,8 +364,8 @@ class ClubSite:
         self.family_url = ""
         self.staged: Slot | None = None
         self.last_fresh = 0.0
-        self.fresh_gap = 3.0
-        self.row_watch = 8.0
+        self.fresh_gap = 0.5   # fresh loads go back to back while the rows are off
+        self.row_watch = 2.0   # rows that are on show within a moment of the page
         self.confirm_wait = 60.0
 
     # ---------------------------------------------------------------- plumbing
@@ -851,9 +851,16 @@ class ClubSite:
         except SiteError:
             return []
 
-    async def attempt(self, partners: list[str]) -> Attempt:
+    async def attempt(self, partners: list[str], force: bool = False) -> Attempt:
         """One press of Continue to Cart from the staged page, then wait for
-        the server's answer without leaving the page."""
+        the server's answer without leaving the page.
+
+        Before the club opens the time, the participants page shows its rows switched
+        off, and only a fresh load of the page shows them switched on. In the author's
+        real windows every accepted booking was a press straight after such a fresh load;
+        presses on a switched-off page were all turned away (and one got no answer at
+        all). So while the rows are off this reloads the page back to back and only
+        presses once they're on. `force` presses anyway (a late fallback)."""
         try:
             loading = await self.js("document.readyState !== 'complete'", timeout=5)
         except SiteError:
@@ -878,6 +885,8 @@ class ClubSite:
             except SiteError as e:
                 self.log(f"fresh load failed: {e}")
             self.last_fresh = time.time()
+        if not rows_enabled(m) and not force:
+            return Attempt(NOT_READY, "the club hasn't opened this time yet (fresh page)")
         req_at = time.time()
         if rows_enabled(m):
             ids = {"check": [m["host"]["cb"]["id"]] + [r["cb"]["id"] for r in m["partners"].values()],

@@ -36,7 +36,7 @@ class FakeSite:
                  open_courts: dict[int, list[int]] | None = None, taken_at=None,
                  answer_s: float = 2.0, unknown_on=(), report=None, grid_after_unknown=None,
                  stage_glitches: int = 0, login_fails: int = 0, bad_password: bool = False,
-                 mine=None):
+                 mine=None, forced_only=False):
         self.clock = clock
         self.W = W
         self.gate_s = gate_s
@@ -56,6 +56,8 @@ class FakeSite:
         self.booked: list[Slot] = []
         self.calls: list[str] = []
         self.pending_unknown = False
+        self.forced_only = forced_only  # model the old behaviour: every press is sent
+        self.forced: list[bool] = []
 
     def rel(self) -> float:
         return self.clock.now() - self.W
@@ -101,12 +103,16 @@ class FakeSite:
     async def is_staged(self) -> bool:
         return self.staged is not None
 
-    async def attempt(self, partners) -> Attempt:
+    async def attempt(self, partners, force=False) -> Attempt:
         assert not self.pending_unknown, "pressed again over an unanswered commit"
-        self.presses += 1
         self.press_times.append(self.rel())
         slot = self.staged
         await self.clock.sleep(self.answer_s)
+        if self.rel() < self.gate_s and not force and not self.forced_only:
+            # a fresh page with its rows still off: nothing is sent
+            return Attempt(engine.NOT_READY, "the club hasn't opened this time yet (fresh page)")
+        self.presses += 1
+        self.forced.append(force)
         if self.presses in self.unknown_on:
             self.pending_unknown = True
             if self.report is True:
