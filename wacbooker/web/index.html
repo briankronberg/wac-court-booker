@@ -507,8 +507,8 @@ function startForm(b) {
   form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners],
     also: b.also && b.also[0] ? b.also[0].login : "", also_partners: b.also && b.also[0] ? [...b.also[0].partners] : [], aq: "",
     weekly: b.weekly, day: b.day, date: b.date,
-    time: b.time, length: b.length, shorter_ok: b.shorter_ok, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
-    : { login, play: "singles", machine: "genie", partners: [], also: "", also_partners: [], aq: "", weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, courts: [], any: true, errors: [], q: "" };
+    time: b.time, length: b.length, shorter_ok: b.shorter_ok, then: b.then || 0, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
+    : { login, play: "singles", machine: "genie", partners: [], also: "", also_partners: [], aq: "", weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, then: 0, courts: [], any: true, errors: [], q: "" };
   window.scrollTo(0, 0);
   render();
 }
@@ -540,7 +540,8 @@ function summaryText(f) {
   const how = !pt ? "" : pt.kind === "all" ? " Prime Time: the app books it 24 hours ahead."
     : ` Books in two parts: ${spanText(pt.main.start, pt.main.length)} a week ahead, ${spanText(pt.prime.start, pt.prime.length)} 24 hours ahead.`;
   const alsoTxt = f.also ? ` Also ${f.also} books a court at the same time${f.also_partners.length ? ` with ${namesText(f.also_partners)}` : ""}.` : "";
-  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${alsoTxt}${how}` };
+  const thenTxt = f.then ? ` Back-to-back: ${spanText(f.time + f.length, f.then)} (${f.then} minutes) on the same court if it's open.` : "";
+  return { ok: true, text: `${when}, ${spanText(f.time, f.length)} (${f.length} minutes${shorter}). ${whatText(f)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}. ${courts}.${alsoTxt}${how}${thenTxt}` };
 }
 
 // Prime Time (the club's FAQ). Singles in these hours can only be booked 24 hours ahead.
@@ -660,6 +661,8 @@ function renderForm(el) {
   h += sec("What time do you start?", `<select id="f-time" aria-label="Start time"><option value="">Choose a time</option>${times.map((m) => `<option value="${m}" ${f.time === m ? "selected" : ""}>${fmtTime(m)}</option>`).join("")}</select>`);
   h += sec("How long?", `<div class="choices">${[30, 60, 90].map((L) => choice("length", L, `${L} min`)).join("")}</div>
      ${f.length > 30 ? `<label class="check"><input type="checkbox" id="f-shorter" ${f.shorter_ok ? "checked" : ""}> If no court has ${f.length} minutes, take a shorter time at the same start</label>` : ""}`);
+  h += sec("Play again right after?", `<div class="choices">${choice("then", 0, "No")}${[30, 60, 90].map((v) => choice("then", v, `Yes, ${v} min`, f.time === null ? "" : `then ${spanText(f.time + f.length, v)}`)).join("")}</div>`,
+    "Back-to-back: a second session starts when the first ends, on the same court if the club has it open.");
   h += sec("Which courts?", `<div class="choices">${courtsFor(f).map((c) => { const k = f.courts.indexOf(c); return `<button type="button" class="choice court" data-court="${c}" aria-pressed="${k >= 0}">${c}${k >= 0 ? `<span class="order">${k + 1}</span>` : ""}</button>`; }).join("")}</div>
      <label class="check" style="margin-top:8px"><input type="checkbox" id="f-any" ${f.any ? "checked" : ""}> Any other court${f.play === "machine" ? " that takes a ball machine" : ""} if ${f.courts.length ? "those are" : "none is chosen or they're"} taken</label>`,
     "Press courts in the order you like them: first choice first. Press again to take one off. Choosing none means any court.");
@@ -833,11 +836,11 @@ async function bookNow() {
   const f = form, ws = windowState(f);
   if (!ws.nowOk) return;
   const day = new Date(ws.nowDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}${f.also ? ` (${f.also} books a court at the same time)` : ""}. The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
+  const ok = await confirmBox("Book it now?", `${whatText(f)} on ${day}, ${spanText(f.time, f.length)}${f.partners.length ? ` with ${namesText(f.partners)}` : ""}${f.also ? ` (${f.also} books a court at the same time)` : ""}. ${f.then ? `It also books the ${f.then}-minute second session right after, if the club has it open. ` : ""}The app books it on the club site straight away. Cancelling less than 24 hours before costs the club's fee.`, "Book it");
   if (!ok) return;
   const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
     also: f.also || "", also_partners: f.also_partners || [], date: ws.nowDate,
-    time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   const j = await runJob(body);
   if (j && j.ok) { form = null; view = "home"; }
   await refresh();
@@ -876,7 +879,7 @@ async function saveForm() {
   const f = form;
   const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
     also: f.also || "", also_partners: f.also_partners || [], weekly: f.weekly, day: f.day, date: f.date,
-    time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   $("#f-save").disabled = true;
   const r = await api("/api/booking", body);
   if (!r.ok) { f.errors = r.errors || ["That wasn't saved."]; render(); return; }

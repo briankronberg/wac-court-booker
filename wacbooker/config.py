@@ -55,6 +55,7 @@ bookings: []
 #    time: "6:00 PM"
 #    length: 90
 #    shorter_ok: true       # if no court has 90, try 60, then 30 (same start time)
+#    then: 60               # a second session right after the first (30, 60 or 90 minutes)
 #    courts: [5, 4, 3, any] # preference order; 'any' only at the end, optional
 #    skip: [2026-12-22, 2026-12-29]
 #  A ball machine:  play: machine,  machine: genie (or regular, or either),  partners: []
@@ -113,6 +114,7 @@ class Booking:
     day: int | None = None       # Monday = 0, weekly
     date: date | None = None     # one-off
     shorter_ok: bool = False
+    then: int = 0                # a second session right after the first: 30, 60 or 90 minutes
     skip: list[date] = field(default_factory=list)
     active: bool = True
     machine: str | None = None   # play: machine only
@@ -155,7 +157,7 @@ class Booking:
     @property
     def span_end(self) -> int:
         """When the whole booking is over (with a second session, its end)."""
-        return self.end
+        return self.end + self.then
 
     @property
     def reservations(self) -> int:
@@ -168,22 +170,35 @@ class Booking:
 
     @property
     def parts(self) -> list[Part]:
-        """Prime Time limits singles and ball machines; doubles is always one part."""
+        """Prime Time limits singles and ball machines; doubles is always one part.
+        A second session (`then`) is one more part ("next"), right after the first."""
         if self.play not in ("singles", "machine") or self.weekday is None:
-            return [Part("main", self.time, self.length, False)]
-        pieces = clubtime.split_prime(self.weekday, self.time, self.length)
-        if len(pieces) == 1:
-            return [Part("main", self.time, self.length, pieces[0].prime)]
-        regular = next(p for p in pieces if not p.prime)
-        prime = next(p for p in pieces if p.prime)
-        return [Part("main", regular.start, regular.length, False),
-                Part("prime", prime.start, prime.length, True)]
+            out = [Part("main", self.time, self.length, False)]
+        else:
+            pieces = clubtime.split_prime(self.weekday, self.time, self.length)
+            if len(pieces) == 1:
+                out = [Part("main", self.time, self.length, pieces[0].prime)]
+            else:
+                regular = next(p for p in pieces if not p.prime)
+                prime = next(p for p in pieces if p.prime)
+                out = [Part("main", regular.start, regular.length, False),
+                       Part("prime", prime.start, prime.length, True)]
+        if self.then:
+            prime = False
+            if self.play in ("singles", "machine") and self.weekday is not None:
+                prime = clubtime.split_prime(self.weekday, self.end, self.then)[0].prime
+            out.append(Part("next", self.end, self.then, prime))
+        return out
 
     @property
     def prime_kind(self) -> str:
-        """'none', 'all' (books 24 hours ahead) or 'split' (two parts)."""
+        """'none', 'all' (books 24 hours ahead) or 'split' (crosses Prime Time)."""
         ps = self.parts
-        return "split" if len(ps) > 1 else ("all" if ps[0].prime else "none")
+        if all(p.prime for p in ps):
+            return "all"
+        if any(p.prime for p in ps):
+            return "split"
+        return "none"
 
     def part(self, key: str = "main") -> Part:
         return next(p for p in self.parts if p.key == key)
@@ -278,7 +293,7 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
     if not name:
         errs.append(f"{label}: needs a name.")
     known = {"name", "login", "play", "partners", "day", "date", "time", "length", "shorter_ok",
-             "courts", "skip", "active", "machine", "also"}
+             "courts", "skip", "active", "machine", "also", "then"}
     for k in raw:
         if k not in known:
             errs.append(f"{label}: '{k}' isn't a setting I know. Check the spelling.")
@@ -381,6 +396,18 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
     shorter_ok = _as_bool(raw.get("shorter_ok", False), f"{label}: shorter_ok", errs)
     active = _as_bool(raw.get("active", True), f"{label}: active", errs)
 
+    then = raw.get("then", 0)
+    if then is None:
+        then = 0
+    try:
+        then = int(then)
+    except (TypeError, ValueError):
+        then = -1
+    if then not in (0, 30, 60, 90):
+        errs.append(f"{label}: 'then' is 30, 60 or 90 minutes right after the first session "
+                    f"(leave it out to turn it off), not '{raw.get('then')}'.")
+        then = 0
+
     courts_raw = raw.get("courts")
     if isinstance(courts_raw, (str, int)):
         courts_raw = [courts_raw]
@@ -415,11 +442,23 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
         skip_raw = [skip_raw]
     skip = [d for d in (_as_date(s, f"{label} skip", errs) for s in skip_raw) if d]
 
+    if then:
+        if minutes + length + then >= 1440:
+            errs.append(f"{label}: with a second session, the booking would run past midnight. "
+                        f"Pick an earlier time or a shorter session.")
+        weekday = day if day is not None else (one_off.weekday() if one_off else None)
+        if weekday is not None and play in ("singles", "machine"):
+            for start, ln, which in ((minutes, length, "the first session"),
+                                     (minutes + length, then, "the second session")):
+                if len(clubtime.split_prime(weekday, start, ln)) > 1:
+                    errs.append(f"{label}: {which} would run into Prime Time, and back-to-back "
+                                f"sessions can't be split. Pick a time that stays out of Prime Time.")
+
     if len(errs) > before:
         return None
     return Booking(name=name, login=login, play=play, partners=partners, time=minutes,
                    length=length, courts=courts, day=day, date=one_off, shorter_ok=shorter_ok,
-                   skip=skip, active=active, machine=machine, also=also)
+                   then=then, skip=skip, active=active, machine=machine, also=also)
 
 
 def _days_overlap(a: Booking, b: Booking) -> bool:
@@ -597,6 +636,8 @@ def booking_to_map(b: Booking) -> CommentedMap:
     m["time"] = clubtime.fmt_time(b.time)
     m["length"] = b.length
     m["shorter_ok"] = b.shorter_ok
+    if b.then:
+        m["then"] = b.then
     m["courts"] = _flow(b.courts)
     m["skip"] = _flow(sorted(b.skip))
     m["active"] = b.active

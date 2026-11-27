@@ -193,6 +193,25 @@ def test_also_not_saved_for_ball_machines(srv):
     assert not r["ok"] and "ball machine" in " ".join(r["errors"])
 
 
+def test_then_booking_warns_when_the_second_task_is_missing(srv, monkeypatch):
+    """The second session is its own scheduled task; without it nothing would ever book it."""
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4, then=60))
+    assert r["ok"], r
+    name = r["name"]
+    main = {"name": scheduler.task_name(name), "logon": "InteractiveToken"}
+    nxt = {"name": scheduler.task_name(name, "next"), "logon": "InteractiveToken"}
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert ", second session 60 min right after" in b["title"]
+    assert b["task"]["ok"] is False and "Rebuild" in b["task"]["text"]
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main, nxt])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["task"]["ok"] is True and "Scheduled" in b["task"]["text"]
+
+
 def test_quit_stops_the_server(srv):
     _, r = call(srv, "/api/quit", {})
     assert r["ok"] and srv.app.stop_requested

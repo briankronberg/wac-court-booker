@@ -62,13 +62,14 @@ class FakeSite:
     def rel(self) -> float:
         return self.clock.now() - self.W
 
-    def _is_open(self, court: int, length: int) -> bool:
+    def _is_open(self, start: int, court: int, length: int) -> bool:
         if court not in self.open_courts.get(length, []):
             return False
         t = self.taken_at.get((court, length))
         if t is not None and self.rel() >= t:
             return False
-        return not any(s.court == court for s in self.booked)
+        end = start + length
+        return not any(s.court == court and s.start < end and start < s.end for s in self.booked)
 
     async def login(self) -> str:
         self.calls.append("login")
@@ -84,7 +85,7 @@ class FakeSite:
         self.calls.append("find_open")
         await self.clock.sleep(3)
         return {L: {c: Slot(date, start, L, c) for c in self.open_courts.get(L, [])
-                    if self._is_open(c, L)} for L in lengths}
+                    if self._is_open(start, c, L)} for L in lengths}
 
     async def stage(self, slot: Slot) -> None:
         self.calls.append(f"stage:{slot.court}/{slot.length}")
@@ -92,7 +93,7 @@ class FakeSite:
         if self.stage_glitches > 0:
             self.stage_glitches -= 1
             raise SiteError("participants page never loaded")
-        if not self._is_open(slot.court, slot.length):
+        if not self._is_open(slot.start, slot.court, slot.length):
             raise SiteError("not in grid", "taken")
         self.staged = slot
 
@@ -120,7 +121,7 @@ class FakeSite:
             return Attempt(engine.UNKNOWN)
         if self.rel() < self.gate_s:
             return Attempt(engine.REJECTED, "None of the listed individuals are eligible for enrollment.")
-        if not self._is_open(slot.court, slot.length):
+        if not self._is_open(slot.start, slot.court, slot.length):
             self.staged = None
             return Attempt(engine.REJECTED, "This time slot is no longer available.")
         self.booked.append(slot)
@@ -153,7 +154,7 @@ class FakeSite:
         await self.clock.sleep(3)
         if self.grid_after_unknown is not None and self.report is None:
             return self.grid_after_unknown
-        return self._is_open(slot.court, slot.length)
+        return self._is_open(slot.start, slot.court, slot.length)
 
 
 def booking(**kw) -> Booking:

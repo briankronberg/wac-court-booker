@@ -7,6 +7,7 @@ from datetime import date, datetime
 
 from wacbooker import runner, site as S, web
 
+from conftest import REAL_JOB_WORK
 from test_web import add_login, call, srv  # noqa: F401  (fixture)
 
 DAY = date(2026, 12, 4)
@@ -157,9 +158,6 @@ def test_court_check_and_calendar_jobs(srv, monkeypatch):
 def test_calendar_page_is_served(srv):
     st, body = call(srv, "/calendar", token=False)
     assert st == 200 and b"Available courts" in body and b"hashchange" in body
-
-
-REAL_JOB_WORK = web.WebApp._job_work
 
 
 def test_short_name():

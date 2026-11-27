@@ -93,7 +93,8 @@ def main_part_court(name: str, day, login: str, own: str) -> int | None:
 
 
 def run_booking(name: str, part: str = "main") -> int:
-    log = _log(name if part == "main" else f"{name} (Prime Time part)")
+    label = {"prime": " (Prime Time part)", "next": " (second session)"}.get(part, "")
+    log = _log(name + label)
     doc, cfg = config.load()
     if not cfg.ok:
         msg = "Not booked: bookings.yaml has a mistake. Open WAC Court Booker to fix it."
@@ -131,31 +132,36 @@ def run_booking(name: str, part: str = "main") -> int:
         return 0
     pb = b.for_part(part)
     first_courts = None
-    if part == "prime":
-        # The Prime Time part only makes sense next to the regular part: same court if it can.
+    if part in ("prime", "next"):
+        # Only makes sense next to the first part: same court if it can. A second session
+        # (unlike Prime Time) still books on its own when the first part wasn't booked.
         if b.also:
             # coordinated logins: each login's own court from the first part goes first for it
             first_courts = {m.login: main_part_court(name, occ.day, m.login, b.login) for m in b.members}
-            if all(c is None for c in first_courts.values()):
+            if part == "prime" and all(c is None for c in first_courts.values()):
                 msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
                        f"{occ.day:%a %m/%d}): the first part wasn't booked.")
                 log(msg)
                 results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
                 return 0
             first_courts = {l: c for l, c in first_courts.items() if c is not None}
-            log(f"Prime Time part; each login's first part went first: {first_courts}")
+            if first_courts:
+                log(f"second part; each login's first part went first: {first_courts}")
         else:
             got = main_part_court(name, occ.day, b.login, b.login)
             if got is None:
-                msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
-                       f"{occ.day:%a %m/%d}): the first part wasn't booked.")
-                log(msg)
-                results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
-                return 0
-            pb.courts = [got] + [c for c in b.courts if c != got]
-            if "any" not in pb.courts:
-                pb.courts.append("any")
-            log(f"Prime Time part; the first part got court {got}, so it goes first")
+                if part == "prime":
+                    msg = (f"Didn't book the Prime Time part ({span(pb.time, pb.length)} "
+                           f"{occ.day:%a %m/%d}): the first part wasn't booked.")
+                    log(msg)
+                    results.record("run", name, "skipped", msg, part=part, day=occ.day.isoformat())
+                    return 0
+            else:
+                pb.courts = [got] + [c for c in b.courts if c != got]
+                if "any" not in pb.courts:
+                    pb.courts.append("any")
+                which = "second session" if part == "next" else "Prime Time part"
+                log(f"{which}; the first part got court {got}, so it goes first")
     login = cfg.login(b.login)
     missing = [m.login for m in b.members if not creds.has_password(cfg.login(m.login).username)]
     if missing:
@@ -180,13 +186,15 @@ def run_booking(name: str, part: str = "main") -> int:
         # one result per member, one toast for the group
         return _finish_group(b, part, occ, res, log)
     title = {"booked": "Booked", "unsure": "Check your bookings"}.get(res.status, "Not booked")
-    if b.prime_kind == "split" and part == "main" and res.booked:
-        pp = b.part("prime")
+    pp = next((p for p in b.parts if p.key == "prime"), None)
+    if pp is not None and part == "main" and res.booked:
         po = clubtime.window_open(clubtime.slot_start(occ.day, pp.time), pp.lead)
         res.message += (f" The Prime Time part ({span(pp.time, pp.length)}) books 24 hours ahead, "
                         f"{clubtime.fmt_when(po)}.")
     elif part == "prime":
         title += " (Prime Time part)"
+    elif part == "next":
+        title += " (second session)"
     results.record("run", name, res.status, res.message, part=part, day=occ.day.isoformat(),
                    court=res.slot.court if res.slot else None,
                    slot=res.slot.describe() if res.slot else "", attempts=len(res.attempts),
@@ -286,6 +294,8 @@ def book_now_block(b: Booking, now: datetime) -> str | None:
     """Why a one-off booking can't be booked right now, or None: every part's booking
     window must be open and the time still ahead."""
     for p in b.parts:
+        if p.key == "next":
+            continue  # the second session defers instead of blocking: its window is checked at booking
         st = clubtime.slot_start(b.date, p.time)
         when = f"{span(p.time, p.length)} on {b.date:%a} {b.date.month}/{b.date.day}"
         if st <= now:
@@ -299,7 +309,9 @@ def book_now_block(b: Booking, now: datetime) -> str | None:
 async def book_now(cfg: Config, b: Booking, login: Login, say: Say, clock=None) -> str:
     """Book a one-off booking straight away, its window already open: the same engine a
     scheduled run uses, with W = now. A Prime Time part goes second, same court first,
-    and only if the first part was booked. Returns 'booked', 'not_booked' or 'unsure'."""
+    and only if the first part was booked. A second session books right after, if its
+    window is open (it defers otherwise) and even if the first part didn't book.
+    Returns 'booked', 'not_booked' or 'unsure'."""
     log = _log(f"book now {b.name}")
     clk = clock or RealClock()
     why = book_now_block(b, clubtime.now_central())
@@ -316,17 +328,30 @@ async def book_now(cfg: Config, b: Booking, login: Login, say: Say, clock=None) 
     statuses: list[str] = []
     try:
         got = None
+        deferred = 0
         for p in b.parts:
             pb = b.for_part(p.key)
+            st = clubtime.slot_start(b.date, p.time)
+            w = datetime.fromtimestamp(clk.now(), clubtime.CENTRAL)  # W = now: the window is open
             if p.key == "prime":
                 if got is None:
                     break
                 pb.courts = [got] + [c for c in b.courts if c != got]
                 if "any" not in pb.courts:
                     pb.courts.append("any")
+            elif p.key == "next":
+                wo = clubtime.window_open(st, p.lead)
+                if wo > w:
+                    say(f"second session {span(p.time, p.length)} on {b.date:%a %b} {b.date.day}: the club "
+                        f"opens booking {clubtime.fmt_when(wo)} — left to its own task")
+                    deferred += 1
+                    continue
+                if got is not None:
+                    pb.courts = [got] + [c for c in b.courts if c != got]
+                    if "any" not in pb.courts:
+                        pb.courts.append("any")
             say(f"Booking {span(p.time, p.length)} on {b.date:%a %b} {b.date.day}…")
-            w = datetime.fromtimestamp(clk.now(), clubtime.CENTRAL)  # W = now: the window is open
-            occ = clubtime.Occurrence(b.date, clubtime.slot_start(b.date, p.time), w)
+            occ = clubtime.Occurrence(b.date, st, w)
             res = await Engine(pb, occ, site, clk, log=log).run()
             if res.status == "not_booked":
                 await site.release()
@@ -337,29 +362,43 @@ async def book_now(cfg: Config, b: Booking, login: Login, say: Say, clock=None) 
             notify.toast({"booked": "Booked", "unsure": "Check your bookings"}.get(res.status, "Not booked"), res.message)
             statuses.append(res.status)
             if not res.booked:
-                break
+                if p.key == "next" or not any(q.key == "next" for q in b.parts):
+                    break
+                # a first part that didn't book doesn't stop the second session:
+                # playing it alone is still play
             got = res.slot.court if res.slot else None
     finally:
         keep_family(login, site)
         await site.close()
-    if statuses and all(s == "booked" for s in statuses) and len(statuses) == len(b.parts):
+    if statuses and all(s == "booked" for s in statuses) and len(statuses) + deferred == len(b.parts):
         return "booked"
     return "unsure" if "unsure" in statuses else "not_booked"
 
 
 async def _book_now_group(cfg: Config, b: Booking, say, clk, log) -> str:
     """Book a coordinated one-off: one site per login per part, each login's own court
-    first for the second part, which goes only if every login got the first one."""
+    first for the second part, which goes only if every login got the first one. A
+    second session (then) still books when the first part didn't, and defers when
+    its window isn't open yet."""
     statuses: list[str] = []
     first_courts = None
+    deferred = 0
     for p in b.parts:
         pb = b.for_part(p.key)
+        st = clubtime.slot_start(b.date, p.time)
+        w = datetime.fromtimestamp(clk.now(), clubtime.CENTRAL)  # W = now: the window is open
         if p.key == "prime" and not first_courts:
             say("Not booked: the Prime Time part needs every login's first part booked.")
             break
+        if p.key == "next":
+            wo = clubtime.window_open(st, p.lead)
+            if wo > w:
+                say(f"second session {span(p.time, p.length)} on {b.date:%a %b} {b.date.day}: the club "
+                    f"opens booking {clubtime.fmt_when(wo)} — left to its own task")
+                deferred += 1
+                continue
         say(f"Booking {span(p.time, p.length)} on {b.date:%a %b} {b.date.day}…")
-        w = datetime.fromtimestamp(clk.now(), clubtime.CENTRAL)  # W = now: the window is open
-        occ = clubtime.Occurrence(b.date, clubtime.slot_start(b.date, p.time), w)
+        occ = clubtime.Occurrence(b.date, st, w)
         out = await run_group(cfg, pb, occ, clk, log, first_courts)
         for m in b.members:
             r = out[m.login]
@@ -373,8 +412,9 @@ async def _book_now_group(cfg: Config, b: Booking, say, clk, log) -> str:
             notify.toast("Booked", " \u00b7 ".join(f"Ct {out[m.login].slot.court} for {m.login}" for m in b.members))
         else:
             notify.toast("Not booked", " \u00b7 ".join(f"{m.login}: {out[m.login].message}" for m in b.members))
-            break
-    if statuses and all(s == "booked" for s in statuses) and len(statuses) == len(b.parts) * len(b.members):
+            if p.key == "next" or not any(q.key == "next" for q in b.parts):
+                break
+    if statuses and all(s == "booked" for s in statuses) and len(statuses) + deferred * len(b.members) == len(b.parts) * len(b.members):
         return "booked"
     return "unsure" if "unsure" in statuses else "not_booked"
 
@@ -503,8 +543,9 @@ async def dry_run(cfg: Config, b: Booking, say: Say) -> bool:
     """Read-only: open the next target day's grid and say what would be booked."""
     log = _log(f"dry run {b.name}")
     if b.prime_kind == "split":
-        p = b.part("prime")
-        say(f"  Checking the regular part. The Prime Time part ({span(p.time, p.length)}) books 24 hours ahead.")
+        p = next((x for x in b.parts if x.key == "prime"), None)
+        if p is not None:
+            say(f"  Checking the regular part. The Prime Time part ({span(p.time, p.length)}) books 24 hours ahead.")
     b = b.for_part("main")
     nxt = b.next_runs(clubtime.now_central(), 1)
     if not nxt:
