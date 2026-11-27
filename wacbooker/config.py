@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -37,6 +38,8 @@ TEMPLATE = """\
 # browser: hidden (the app's own Chromium, no window), edge or chrome.
 # show_window: true shows the Edge/Chrome window (handy to watch a test).
 # run_signed_out: true lets bookings run while nobody is signed in to Windows.
+# email_to: an address for a short email after each booking run (set it in Settings;
+#   the mail password goes in Windows Credential Manager, never in this file).
 
 browser: hidden
 show_window: false
@@ -249,6 +252,10 @@ class Config:
     browser: str = "hidden"
     show_window: bool = False
     run_signed_out: bool = False
+    email_to: str = ""           # where run summaries go (empty = no email)
+    email_from: str = ""         # the account that sends them (empty = email_to)
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 465
     logins: list[Login] = field(default_factory=list)
     bookings: list[Booking] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -543,7 +550,7 @@ def from_doc(doc: Any) -> Config:
         cfg.errors.append("The file should be a list of 'key: value' settings.")
         return cfg
     for k in doc:
-        if k not in ("browser", "show_window", "run_signed_out", "logins", "bookings"):
+        if k not in ("browser", "show_window", "run_signed_out", "logins", "bookings", "email_to", "email_from", "smtp_host", "smtp_port"):
             cfg.errors.append(f"'{k}' isn't a setting I know. Check the spelling.")
     br = str(doc.get("browser", "hidden")).strip().lower()
     if br not in BROWSERS:
@@ -552,6 +559,16 @@ def from_doc(doc: Any) -> Config:
         cfg.browser = br
     cfg.show_window = _as_bool(doc.get("show_window", False), "show_window", cfg.errors)
     cfg.run_signed_out = _as_bool(doc.get("run_signed_out", False), "run_signed_out", cfg.errors)
+    for key in ("email_to", "email_from"):
+        val = str(doc.get(key) or "").strip()
+        if val and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", val):
+            cfg.errors.append(f"{key} should be an email address like name@gmail.com, not '{val}'.")
+        setattr(cfg, key, val)
+    cfg.smtp_host = str(doc.get("smtp_host") or "smtp.gmail.com").strip()
+    try:
+        cfg.smtp_port = int(doc.get("smtp_port") or 465)
+    except (TypeError, ValueError):
+        cfg.errors.append(f"smtp_port should be a number like 465, not '{doc.get('smtp_port')}'.")
     for i, raw in enumerate(doc.get("logins") or [], 1):
         if not isinstance(raw, dict) or not raw.get("nickname") or not raw.get("username"):
             cfg.errors.append(f"Login {i}: needs a nickname and a username.")
