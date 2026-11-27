@@ -102,3 +102,11 @@ def test_test_booking_skips_a_full_day(monkeypatch):
     monkeypatch.setattr(runner.results, "record", lambda *a, **k: None)
     out = asyncio.run(runner.test_booking(None, None, "singles", [], ["any"], lambda m: None, lambda q: False))
     assert out == "kept" and site.staged.date == d3
+
+
+def test_day_conflict_reads_the_reports_unpadded_dates():
+    from wacbooker.engine import day_conflict
+    rows = [{"date": "12/4/2026", "start": 13 * 60 + 30, "end": 14 * 60 + 30}]
+    assert day_conflict(rows, "12/04/2026", 14 * 60, 15 * 60)  # overlaps 1:30-2:30 PM
+    two = rows + [{"date": "12/4/2026", "start": 8 * 60, "end": 9 * 60}]
+    assert "2 reservations" in day_conflict(two, "12/04/2026", 18 * 60, 19 * 60)

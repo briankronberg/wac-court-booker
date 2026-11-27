@@ -493,7 +493,8 @@ async def _guard_async(cfg: Config, b: Booking, occ: clubtime.Occurrence, log) -
         try:
             await site.login()
             try:
-                rows = [r for r in await site.reservations(date_s, date_s, False) if r.get("date") == date_s]
+                rows = [r for r in await site.reservations(date_s, date_s, False)
+                        if clubtime.same_day(r.get("date") or "", date_s)]
             except SiteError as e:
                 log(f"couldn't read {m.login}'s reservations ({e}); going ahead")
                 rows = []

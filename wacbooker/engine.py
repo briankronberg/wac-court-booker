@@ -186,7 +186,7 @@ DAY_LIMIT = 2  # the club's reservations per account per day
 def day_conflict(rows: list[dict], date: str, start: int, end: int) -> str | None:
     """Why the club would turn this booking away, from the login's own reservations
     (Reservation Report rows): one already overlapping the time, or the daily limit."""
-    rows = [r for r in rows if r.get("date") == date]
+    rows = [r for r in rows if clubtime.same_day(r.get("date") or "", date)]
     d = datetime.strptime(date, "%m/%d/%Y")
     day = f"{d:%a} {d.month}/{d.day}"
     for r in rows:
