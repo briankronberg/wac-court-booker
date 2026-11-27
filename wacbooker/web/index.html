@@ -507,8 +507,8 @@ function startForm(b) {
   form = b ? { old_name: b.name, login, play: b.play, machine: b.machine || "genie", partners: [...b.partners],
     also: b.also && b.also[0] ? b.also[0].login : "", also_partners: b.also && b.also[0] ? [...b.also[0].partners] : [], aq: "",
     weekly: b.weekly, day: b.day, date: b.date,
-    time: b.time, length: b.length, shorter_ok: b.shorter_ok, then: b.then || 0, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
-    : { login, play: "singles", machine: "genie", partners: [], also: "", also_partners: [], aq: "", weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, then: 0, courts: [], any: true, errors: [], q: "" };
+    time: b.time, length: b.length, shorter_ok: b.shorter_ok, then: b.then || 0, blocker: !!b.blocker, courts: b.courts.filter((c) => c !== "any"), any: b.courts.includes("any"), errors: [], q: "" }
+    : { login, play: "singles", machine: "genie", partners: [], also: "", also_partners: [], aq: "", weekly: true, day: null, date: null, time: null, length: 90, shorter_ok: true, then: 0, blocker: false, courts: [], any: true, errors: [], q: "" };
   window.scrollTo(0, 0);
   render();
 }
@@ -663,6 +663,8 @@ function renderForm(el) {
      ${f.length > 30 ? `<label class="check"><input type="checkbox" id="f-shorter" ${f.shorter_ok ? "checked" : ""}> If no court has ${f.length} minutes, take a shorter time at the same start</label>` : ""}`);
   h += sec("Play again right after?", `<div class="choices">${choice("then", 0, "No")}${[30, 60, 90].map((v) => choice("then", v, `Yes, ${v} min`, f.time === null ? "" : `then ${spanText(f.time + f.length, v)}`)).join("")}</div>`,
     "Back-to-back: a second session starts when the first ends, on the same court if the club has it open.");
+  if (f.play !== "machine") h += sec("Protect the start time?", `<label class="check"><input type="checkbox" id="f-blocker" ${f.blocker ? "checked" : ""}> Book a guard slot just before, then cancel it</label>`,
+    "A short court booked just before your time, on the same court, so nobody can book a longer time that runs into yours. The app cancels it as soon as your booking is settled. Not for Prime Time starts.");
   h += sec("Which courts?", `<div class="choices">${courtsFor(f).map((c) => { const k = f.courts.indexOf(c); return `<button type="button" class="choice court" data-court="${c}" aria-pressed="${k >= 0}">${c}${k >= 0 ? `<span class="order">${k + 1}</span>` : ""}</button>`; }).join("")}</div>
      <label class="check" style="margin-top:8px"><input type="checkbox" id="f-any" ${f.any ? "checked" : ""}> Any other court${f.play === "machine" ? " that takes a ball machine" : ""} if ${f.courts.length ? "those are" : "none is chosen or they're"} taken</label>`,
     "Press courts in the order you like them: first choice first. Press again to take one off. Choosing none means any court.");
@@ -748,6 +750,7 @@ function renderForm(el) {
   if ($("#f-date")) $("#f-date").onchange = (e) => { f.date = e.target.value || null; render(); };
   $("#f-time").onchange = (e) => { f.time = e.target.value === "" ? null : +e.target.value; f.errors = []; render(); };
   if ($("#f-shorter")) $("#f-shorter").onchange = (e) => { f.shorter_ok = e.target.checked; render(); };
+  if ($("#f-blocker")) $("#f-blocker").onchange = (e) => { f.blocker = e.target.checked; render(); };
   $("#f-any").onchange = (e) => { f.any = e.target.checked; render(); };
   el.querySelectorAll("[data-court]").forEach((b) => (b.onclick = () => {
     const c = +b.dataset.court, i = f.courts.indexOf(c);
@@ -840,7 +843,7 @@ async function bookNow() {
   if (!ok) return;
   const body = { kind: "book-now", confirmed: true, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
     also: f.also || "", also_partners: f.also_partners || [], date: ws.nowDate,
-    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, blocker: f.play !== "machine" && !!f.blocker, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   const j = await runJob(body);
   if (j && j.ok) { form = null; view = "home"; }
   await refresh();
@@ -879,7 +882,7 @@ async function saveForm() {
   const f = form;
   const body = { old_name: f.old_name, login: f.login, play: f.play, machine: f.play === "machine" ? f.machine : null, partners: f.partners,
     also: f.also || "", also_partners: f.also_partners || [], weekly: f.weekly, day: f.day, date: f.date,
-    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
+    time: f.time, length: f.length, shorter_ok: f.shorter_ok, then: f.then || 0, blocker: f.play !== "machine" && !!f.blocker, courts: [...f.courts, ...(f.any || !f.courts.length ? ["any"] : [])] };
   $("#f-save").disabled = true;
   const r = await api("/api/booking", body);
   if (!r.ok) { f.errors = r.errors || ["That wasn't saved."]; render(); return; }

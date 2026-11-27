@@ -212,6 +212,35 @@ def test_then_booking_warns_when_the_second_task_is_missing(srv, monkeypatch):
     assert b["task"]["ok"] is True and "Scheduled" in b["task"]["text"]
 
 
+def test_blocker_booking_saves_and_warns_when_the_guard_task_is_missing(srv, monkeypatch):
+    """The guard slot is its own scheduled task, an hour before the booking's own."""
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4, blocker=True))
+    assert r["ok"], r
+    name = r["name"]
+    main = {"name": scheduler.task_name(name), "logon": "InteractiveToken"}
+    blk = {"name": scheduler.task_name(name, "blocker"), "logon": "InteractiveToken"}
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["blocker"] is True
+    assert "guard slot first" in b["title"]
+    assert b["task"]["ok"] is False and "Rebuild" in b["task"]["text"]
+    monkeypatch.setattr(scheduler, "status", lambda *a, **k: [main, blk])
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["task"]["ok"] is True and "Scheduled" in b["task"]["text"]
+
+
+def test_blocker_off_by_default(srv):
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4))
+    assert r["ok"], r
+    _, state = call(srv, "/api/state")
+    b = state["bookings"][0]
+    assert b["blocker"] is False and "guard" not in b["title"]
+
+
 def test_quit_stops_the_server(srv):
     _, r = call(srv, "/api/quit", {})
     assert r["ok"] and srv.app.stop_requested

@@ -95,17 +95,19 @@ def prime_note(b: Booking) -> dict | None:
 
 
 def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict | None = None,
-                 next_task: dict | None = None) -> dict:
+                 next_task: dict | None = None, blocker_task: dict | None = None) -> dict:
     weekly = b.day is not None
     when = f"Every {clubtime.DAYS[b.day]}" if weekly else f"{b.date:%A}, {b.date:%B} {b.date.day}"
     v: dict[str, Any] = {
         "name": b.name, "login": b.login, "play": b.play, "machine": b.machine, "partners": b.partners, "day": b.day,
         "date": b.date.isoformat() if b.date else None, "time": b.time, "length": b.length,
         "then": b.then,
+        "blocker": b.blocker,
         "shorter_ok": b.shorter_ok, "courts": b.courts, "active": b.active,
         "skip": [d.isoformat() for d in b.skip],
         "title": f"{when}, {span_text(b.time, b.length)}"
-                 + (f", second session {b.then} min right after" if b.then else ""),
+                 + (f", second session {b.then} min right after" if b.then else "")
+                 + (", guard slot first" if b.blocker else ""),
         "who": b.what + (f" with {names_text(b.partners)}" if b.partners else "")
               + "".join(f"; also {m.login} with {names_text(m.partners)}" for m in b.also),
         "also": [{"login": m.login, "partners": m.partners} for m in b.also],
@@ -118,7 +120,7 @@ def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict 
     prime = next((p for p in b.parts if p.key == "prime"), None)
     split = prime is not None
     for o in b.next_runs(now - clubtime.LATE_OK, 2):
-        on = o.run_at
+        on = o.run_at - timedelta(minutes=60) if b.blocker else o.run_at
         pc = clubtime.fmt_time(on.hour * 60 + on.minute)
         if on.date() != o.window.date():
             pc = f"{md(on.date())}, {pc}"
@@ -140,7 +142,7 @@ def booking_view(b: Booking, now: datetime, task: dict | None, prime_task: dict 
         v["task"] = {"ok": True, "text": "This date has passed. Remove it when you like."}
     elif not b.active:
         v["task"] = {"ok": True, "text": "Paused: nothing books until you turn it back on."}
-    elif not task or (split and not prime_task) or (b.then and not next_task):
+    elif not task or (split and not prime_task) or (b.then and not next_task) or (b.blocker and not blocker_task):
         v["task"] = {"ok": False, "text": "Not scheduled yet. Open Settings and press \"Rebuild scheduled tasks\"."}
     else:
         how = ("even when you're signed out" if task.get("logon") == "Password"
@@ -242,7 +244,8 @@ class WebApp:
             "logins": logins,
             "bookings": [booking_view(b, now, tasks.get(scheduler.task_name(b.name)),
                                       tasks.get(scheduler.task_name(b.name, "prime")),
-                                      tasks.get(scheduler.task_name(b.name, "next"))) for b in cfg.bookings],
+                                      tasks.get(scheduler.task_name(b.name, "next")),
+                                      tasks.get(scheduler.task_name(b.name, "blocker"))) for b in cfg.bookings],
             "prime_time": {"text": clubtime.PRIME_TEXT,
                            "spans": [[list(days), a, z] for days, a, z in clubtime.PRIME_TIME]},
             "settings": {"browser": cfg.browser, "show_window": cfg.show_window,
@@ -348,6 +351,8 @@ class WebApp:
                                                        if p.strip()]}]
         if body.get("then"):
             raw["then"] = int(body["then"])
+        if body.get("blocker"):
+            raw["blocker"] = True
         if body.get("weekly", True):
             if body.get("day") is None:
                 raise UserError("Choose a day of the week.")
