@@ -167,3 +167,30 @@ def test_also_unknown_login_is_an_error(tmp_path):
     text = GOOD.replace("    active: true", ALSO.replace("login: partner", "login: nobody") + "    active: true")
     _, _, cfg = load_text(tmp_path, text)
     assert any("no login called" in e and "nobody" in e for e in cfg.errors)
+
+
+def test_blocker_refused_for_a_ball_machine():
+    errs = []
+    b = config.parse_booking({"name": "m", "login": "me", "play": "machine", "day": "Saturday",
+                              "time": "1:00 PM", "length": 60, "courts": [8, "any"], "blocker": True}, 1, errs)
+    assert b is None and any("blocker" in e and "ball machine" in e for e in errs), errs
+
+
+def _then_doc(shorter_ok):
+    return {"logins": [{"nickname": "me", "username": "jsmith"}],
+            "bookings": [{"name": "Then test", "login": "me", "play": "doubles",
+                          "partners": ["Pat Lee", "Sam Ortiz", "Kim Park"], "day": "Tuesday",
+                          "time": "9:00 AM", "length": 90, "shorter_ok": shorter_ok, "then": 60,
+                          "courts": [5, "any"]}]}
+
+
+def test_then_with_shorter_ok_warns_about_a_gap():
+    cfg = config.from_doc(_then_doc(True))
+    assert cfg.ok, cfg.errors
+    assert "gap" in " ".join(cfg.warnings)
+
+
+def test_then_without_shorter_ok_has_no_gap_warning():
+    cfg = config.from_doc(_then_doc(False))
+    assert cfg.ok, cfg.errors
+    assert "gap" not in " ".join(cfg.warnings)

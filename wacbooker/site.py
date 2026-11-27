@@ -342,6 +342,24 @@ def report_has(rows: list[str], slot: Slot) -> bool:
     return False
 
 
+def sweep_profiles(max_age_hours: float = 24.0) -> int:
+    """Delete throwaway browser profiles left by runs that were killed. Returns how many."""
+    import shutil
+    root = paths.home() / "profiles"
+    if not root.exists():
+        return 0
+    cutoff = time.time() - max_age_hours * 3600
+    n = 0
+    for d in root.iterdir():
+        try:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 class ClubSite:
     """One sign-in, one browser page. Implements engine.Site."""
 
@@ -395,6 +413,7 @@ class ClubSite:
                 self.page = await self.ctx.new_page()
             else:
                 channel = {"edge": "msedge", "chrome": "chrome"}[self.browser]
+                sweep_profiles()
                 prof = paths.profile_dir(self.browser, f"{self.username}-{os.getpid()}-{id(self) % 100000}")
                 prof.mkdir(parents=True, exist_ok=True)
                 self._profile = prof

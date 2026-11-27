@@ -138,6 +138,12 @@ def test_mistakes_come_back_in_plain_words(srv):
     assert not r["ok"] and "overlap" in r["errors"][0]
 
 
+def test_bad_second_session_length_is_a_plain_error(srv):
+    add_login(srv)
+    _, r = call(srv, "/api/booking", booking(day=4, then="abc"))
+    assert not r["ok"] and "second session" in " ".join(r["errors"])
+
+
 def test_no_booking_without_a_login(srv):
     _, r = call(srv, "/api/booking", booking())
     assert not r["ok"] and "login" in r["errors"][0]

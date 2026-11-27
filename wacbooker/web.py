@@ -361,7 +361,10 @@ class WebApp:
             raw["also"] = [{"login": also, "partners": [p.strip() for p in (body.get("also_partners") or [])
                                                        if p.strip()]}]
         if body.get("then"):
-            raw["then"] = int(body["then"])
+            try:
+                raw["then"] = int(body["then"])
+            except (TypeError, ValueError):
+                raise UserError("The second session's length should be 30, 60 or 90 minutes.")
         if body.get("blocker"):
             raw["blocker"] = True
         if body.get("weekly", True):

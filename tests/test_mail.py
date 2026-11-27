@@ -126,3 +126,38 @@ def test_send_failure_is_reported_not_raised(monkeypatch):
 def test_sender_defaults_to_the_address():
     assert mail.sender(cfg(email_to="me@example.com")) == "me@example.com"
     assert mail.sender(cfg(email_to="me@example.com", email_from="s@example.com")) == "s@example.com"
+
+
+class FakeStartTLS:
+    started = []
+    logins = []
+
+    def __init__(self, host, port, timeout=None):
+        self.host, self.port = host, port
+        FakeStartTLS.started.append((host, port))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def starttls(self, context=None):
+        self.tls = context is not None
+
+    def login(self, user, pw):
+        FakeStartTLS.logins.append((self.host, self.port, user, pw, self.tls))
+
+    def send_message(self, msg):
+        FakeStartTLS.started.append(("sent", msg["To"]))
+
+
+def test_port_587_uses_starttls(monkeypatch):
+    setup(monkeypatch)
+    FakeStartTLS.started, FakeStartTLS.logins = [], []
+    mail.set_password("me@example.com", "app-password-123")
+    ok, why = mail.send(cfg(email_to="me@example.com", smtp_host="smtp.example.com", smtp_port=587),
+                        "Booked", "x", smtp=FakeSMTP, starttls_smtp=FakeStartTLS)
+    assert ok, why
+    assert FakeStartTLS.logins == [("smtp.example.com", 587, "me@example.com", "app-password-123", True)]
+    assert FakeSMTP.logins == [] and FakeSMTP.sent == []

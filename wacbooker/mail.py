@@ -61,8 +61,11 @@ def compose(cfg, subject: str, summary: str, details=()) -> EmailMessage:
     return msg
 
 
-def send(cfg, subject: str, summary: str, details=(), smtp=smtplib.SMTP_SSL) -> tuple[bool, str]:
-    """(sent?, what happened). Never raises; never includes the password."""
+def send(cfg, subject: str, summary: str, details=(), smtp=smtplib.SMTP_SSL,
+         starttls_smtp=smtplib.SMTP) -> tuple[bool, str]:
+    """(sent?, what happened). Never raises; never includes the password.
+    Port 465 is TLS from the first byte; any other port (587) connects in plain text
+    and upgrades with STARTTLS before logging in."""
     if not cfg.email_to:
         return False, "no email address is set"
     who = sender(cfg)
@@ -73,8 +76,14 @@ def send(cfg, subject: str, summary: str, details=(), smtp=smtplib.SMTP_SSL) -> 
     if not pw:
         return False, f"no saved email password for {who}"
     try:
-        with smtp(cfg.smtp_host or DEFAULT_HOST, int(cfg.smtp_port or DEFAULT_PORT),
-                  context=ssl.create_default_context(), timeout=30) as s:
+        host, port = cfg.smtp_host or DEFAULT_HOST, int(cfg.smtp_port or DEFAULT_PORT)
+        if port == 465:
+            conn = smtp(host, port, context=ssl.create_default_context(), timeout=30)
+        else:
+            conn = starttls_smtp(host, port, timeout=30)
+        with conn as s:
+            if port != 465:
+                s.starttls(context=ssl.create_default_context())
             s.login(who, pw)
             s.send_message(compose(cfg, subject, summary, details))
     except (smtplib.SMTPException, OSError) as e:

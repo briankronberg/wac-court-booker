@@ -471,6 +471,9 @@ def parse_booking(raw: Any, idx: int, errs: list[str]) -> Booking | None:
     if len(errs) > before:
         return None
     weekday = day if day is not None else (one_off.weekday() if one_off else None)
+    if blocker and play == "machine":
+        errs.append(f"{label}: a blocker is for courts, not ball machines; take 'blocker' out.")
+        blocker = False
     if blocker and play in ("singles", "machine") and weekday is not None \
             and len(pieces := clubtime.split_prime(weekday, minutes, length)) == 1 and pieces[0].prime:
         errs.append(f"{label}: a blocker can't protect a Prime Time start: "
@@ -540,6 +543,10 @@ def check(cfg: Config, now: datetime | None = None) -> None:
         if b.date and not b.next_runs(now - clubtime.LATE_OK, 1):
             cfg.warnings.append(f"Booking '{b.name}' ({b.date:%m/%d/%Y}) is past its booking "
                                 f"window, so it won't run. Remove it or book on the club site.")
+    for b in active:
+        if b.active and b.then and b.shorter_ok:
+            cfg.warnings.append(f"Booking '{b.name}': if the first session is booked shorter, the second one "
+                                f"still starts at {clubtime.fmt_time(b.end)}, so there'd be a gap between them.")
 
 
 def from_doc(doc: Any) -> Config:
