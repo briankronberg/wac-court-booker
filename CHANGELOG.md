@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- **Fix:** a booking's second session ("Play again right after") and its guard court ("Protect the start time") never booked: their scheduled runs stopped straight away. Updating is enough: the scheduled tasks stay as they are.
+
 ## 0.6.0
 
 - **Book for another login at the same time.** A booking can add another login (for example your partner's) with its own partners. When the booking opens, both book at the same moment, each in its own browser, on different courts, side by side when the club has them.
