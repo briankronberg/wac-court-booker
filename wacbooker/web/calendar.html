@@ -3,86 +3,112 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Court calendar - WAC Court Booker</title>
+<title>Available courts - WAC Court Booker</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23c8dc3c'/%3E%3Cpath d='M5 9c6 3 6 11 0 14M27 9c-6 3-6 11 0 14' stroke='%23fff' stroke-width='2' fill='none'/%3E%3C/svg%3E">
 <style>
 :root {
   --bg: #f3f6f2; --surface: #ffffff; --ink: #17241c; --muted: #56655b; --line: #d9e1da;
   --accent: #2a7a4b; --accent-ink: #ffffff; --open: #d6efdf; --open-ink: #1d5c37; --open-line: #8cc8a2;
-  --taken: #c9cfca; --taken-ink: #3f4a43; --prime: #fff4e0; --prime-ink: #8a4b00; --mine: #1f6feb;
+  --taken: #c9cfca; --taken-ink: #3f4a43; --blocked: #e6e9e6; --blocked-ink: #6a756e;
+  --prime: #fff4e0; --prime-ink: #8a4b00; --mine: #1f6feb; --machine: #e8efff; --machine-ink: #24459a;
   --bad: #a52a22; --focus: #1f6feb; color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #111814; --surface: #19221c; --ink: #e8efe9; --muted: #a3b2a8; --line: #2e3b32;
     --accent: #5cc184; --accent-ink: #0c1a11; --open: #1f3d2a; --open-ink: #9fe0b5; --open-line: #2f6a45;
-    --taken: #39443d; --taken-ink: #c3ccc6; --prime: #33281a; --prime-ink: #f3c27a; --mine: #6ea8ff;
+    --taken: #39443d; --taken-ink: #c3ccc6; --blocked: #232c26; --blocked-ink: #8d9a91;
+    --prime: #33281a; --prime-ink: #f3c27a; --mine: #6ea8ff; --machine: #1c2740; --machine-ink: #a9c1ff;
     --bad: #ff9c94; --focus: #6ea8ff; color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
 html { font-size: 16px; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; line-height: 1.45; }
-button { font: inherit; color: inherit; }
+button, input { font: inherit; color: inherit; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 header { position: sticky; top: 0; z-index: 3; background: var(--surface); border-bottom: 1px solid var(--line); padding: 12px 16px; }
-.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 1100px; margin: 0 auto; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 1200px; margin: 0 auto; }
 h1 { font-size: 1.3rem; margin: 0; flex: 1; min-width: 220px; }
 .btn { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 8px 14px; cursor: pointer; font-weight: 600; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn:disabled { opacity: .5; cursor: default; }
+input[type=date] { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 7px 10px; }
 .muted { color: var(--muted); }
 .small { font-size: .88rem; }
-main { max-width: 1100px; margin: 0 auto; padding: 14px 16px 40px; }
+main { max-width: 1200px; margin: 0 auto; padding: 14px 16px 40px; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 12px; font-size: .9rem; }
 .legend span::before { content: ""; display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--line); }
 .legend .l-open::before { background: var(--open); border-color: var(--open-line); }
 .legend .l-taken::before { background: var(--taken); }
+.legend .l-blocked::before { background: var(--blocked); }
 .legend .l-prime::before { background: var(--prime); }
+.legend .l-machine::before { background: var(--machine); }
 .legend .l-mine::before { background: transparent; border: 2px solid var(--mine); }
 .wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 640px; }
+table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 860px; table-layout: fixed; }
 th, td { padding: 0; text-align: center; border-bottom: 1px solid var(--line); }
-thead th { position: sticky; top: 0; background: var(--surface); padding: 10px 4px; font-size: .95rem; z-index: 1; }
-th.time { text-align: right; padding: 0 10px; white-space: nowrap; font-weight: 600; font-size: .9rem; width: 92px; }
+thead th { position: sticky; top: 0; background: var(--surface); padding: 8px 4px; font-size: .92rem; z-index: 1; line-height: 1.2; }
+thead th small { display: block; font-weight: 500; font-size: .7rem; color: var(--muted); }
+thead th.mach { background: var(--machine); color: var(--machine-ink); }
+th.time { text-align: right; padding: 0 10px; white-space: nowrap; font-weight: 600; font-size: .9rem; width: 96px; }
 tr.prime th.time { background: var(--prime); color: var(--prime-ink); }
 tr.prime th.time small { display: block; font-weight: 500; font-size: .7rem; }
 td { padding: 3px; }
-.cell { border-radius: 7px; padding: 6px 2px; font-size: .82rem; font-weight: 600; }
-.cell.open { background: var(--open); color: var(--open-ink); border: 1px solid var(--open-line); }
-.cell.taken { background: var(--taken); color: var(--taken-ink); border: 1px solid transparent; font-weight: 500; }
+td.sep { border-left: 2px solid var(--line); }
+.cell { border-radius: 7px; padding: 6px 2px; font-size: .82rem; font-weight: 600; border: 1px solid transparent; }
+button.cell { width: 100%; cursor: pointer; }
+.cell.open { background: var(--open); color: var(--open-ink); border-color: var(--open-line); }
+button.cell.open:hover { filter: brightness(.95); }
+.cell.booked { background: var(--taken); color: var(--taken-ink); font-weight: 500; }
+.cell.closed { background: var(--blocked); color: var(--blocked-ink); font-weight: 500; }
+.cell.past { background: transparent; color: var(--muted); font-weight: 400; }
+.cell.free { background: var(--machine); color: var(--machine-ink); }
 tr.mine td .cell { box-shadow: inset 0 0 0 2px var(--mine); }
-.log p { margin: 4px 0; }
 .spin { display: inline-block; width: 16px; height: 16px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s 1s linear infinite; vertical-align: -3px; margin-right: 8px; }
 @keyframes s { to { transform: rotate(360deg); } }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
 .bad { color: var(--bad); }
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; z-index: 9; }
 </style>
 </head>
 <body>
 <header><div class="bar">
-  <h1 id="title">Court calendar</h1>
-  <button class="btn" id="prev" type="button">‹ Day before</button>
-  <button class="btn" id="next" type="button">Day after ›</button>
+  <h1 id="title">Available courts</h1>
+  <button class="btn" id="prev" type="button" aria-label="Day before">‹</button>
+  <input type="date" id="day" aria-label="Date">
+  <button class="btn" id="next" type="button" aria-label="Day after">›</button>
   <button class="btn primary" id="refresh" type="button">↻ Refresh</button>
 </div></header>
 <main>
   <p class="muted small" id="status"></p>
-  <div class="legend"><span class="l-open">Open now</span><span class="l-taken">Taken (booked, a lesson, or closed)</span><span class="l-prime">Prime Time (singles book 24 hours ahead)</span><span class="l-mine" id="lg-mine" hidden>Your time</span></div>
+  <div class="legend"><span class="l-open">Open</span><span class="l-taken">Booked by a member</span><span class="l-blocked">Blocked (lesson, league, event or closed)</span><span class="l-prime">Prime Time (singles and ball machines book 24 hours ahead)</span><span class="l-machine">Ball machine free</span><span class="l-mine" id="lg-mine" hidden>Your time</span></div>
   <div id="body"></div>
 </main>
 <script>
 "use strict";
-const P = new URLSearchParams(location.hash.slice(1));
-const TOKEN = (() => {
-  const t = P.get("t");
-  try { if (t) { sessionStorage.setItem("wacb-t", t); return t; } return sessionStorage.getItem("wacb-t") || ""; } catch (e) { return t || ""; }
-})();
-let day = P.get("d"), mineStart = P.has("s") ? +P.get("s") : null, mineLen = +(P.get("n") || 0), login = P.get("l") || "";
-history.replaceState(null, "", location.pathname);
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-let PRIME = [], busy = false;
+let TOKEN = "", day = "", mineStart = null, mineLen = 0, login = "", PRIME = [], busy = false, again = false, last = null;
+
+function isoOf(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function dateOf(iso) { return new Date(iso + "T12:00:00"); }
+// Read what the main window asked for. A second "See Available Courts" only changes the
+// hash of this same window, so the page reads it again on hashchange.
+function readHash() {
+  const P = new URLSearchParams(location.hash.slice(1));
+  if (!P.toString()) return false;
+  const t = P.get("t");
+  try { if (t) sessionStorage.setItem("wacb-t", t); } catch (e) { /* private window */ }
+  TOKEN = t || TOKEN;
+  day = P.get("d") || isoOf(new Date());
+  mineStart = P.has("s") ? +P.get("s") : null;
+  mineLen = +(P.get("n") || 0);
+  login = P.get("l") || "";
+  history.replaceState(null, "", location.pathname);
+  return true;
+}
+if (!readHash()) { try { TOKEN = sessionStorage.getItem("wacb-t") || ""; } catch (e) { /* none */ } day = isoOf(new Date()); }
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? { headers: { "X-WACB-Token": TOKEN } } : {
@@ -91,68 +117,92 @@ async function api(path, body) {
   return r.json();
 }
 function fmtTime(m) { const h = Math.floor(m / 60), mi = m % 60; return `${(h % 12) || 12}:${String(mi).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`; }
-function dateOf(iso) { return new Date(iso + "T12:00:00"); }
-function isoOf(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 function weekday(iso) { return (dateOf(iso).getDay() + 6) % 7; }
 function inPrime(iso, m) { const wd = weekday(iso); return PRIME.some(([days, a, z]) => days.includes(wd) && a <= m && m < z); }
+function toast(msg) {
+  const t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); t.textContent = msg;
+  document.body.append(t); setTimeout(() => t.remove(), 3500);
+}
 
 function setTitle() {
-  const d = dateOf(day);
-  const t = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const t = dateOf(day).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   $("#title").textContent = `Courts on ${t}`;
   document.title = `Courts on ${t}`;
+  $("#day").value = day;
   $("#lg-mine").hidden = mineStart === null;
 }
 
+const WORD = { open: "Open", booked: "Booked", closed: "Blocked", past: "Past" };
 function draw(data) {
-  const courts = data.courts;
-  const all = courts.flatMap((c) => data.open[String(c)] || []);
-  if (!all.length) {
-    $("#body").innerHTML = `<div class="card"><p>No court shows open on this day right now.</p><p class="muted small">Either every court is taken, or the club site hasn't listed this day yet.</p></div>`;
-    return;
-  }
-  let first = Math.min(...all), last = Math.max(...all);
-  if (mineStart !== null) { first = Math.min(first, mineStart); last = Math.max(last, mineStart + mineLen - 30); }
-  first -= first % 30;
+  const courts = data.courts, mc = new Set(data.machine_courts || []), machines = Object.keys(data.machines || {});
+  const anyOpen = courts.some((c) => Object.values(data.cells[String(c)]).includes("open"));
   let rows = "";
-  for (let m = first; m <= last; m += 30) {
+  for (const m of data.starts) {
     const prime = inPrime(data.date, m);
     const mine = mineStart !== null && m >= mineStart && m < mineStart + mineLen;
-    const cells = courts.map((c) => (data.open[String(c)] || []).includes(m)
-      ? `<td><div class="cell open" title="Court ${c} is open at ${fmtTime(m)}">Open</div></td>`
-      : `<td><div class="cell taken" title="Court ${c} is taken at ${fmtTime(m)}">Taken</div></td>`).join("");
-    rows += `<tr class="${prime ? "prime" : ""} ${mine ? "mine" : ""}"><th class="time" scope="row">${fmtTime(m)}${prime ? "<small>Prime Time</small>" : ""}</th>${cells}</tr>`;
+    const cells = courts.map((c) => {
+      const st = data.cells[String(c)][String(m)];
+      const tip = `Court ${c} at ${fmtTime(m)}: ${WORD[st].toLowerCase()}`;
+      return st === "open"
+        ? `<td><button type="button" class="cell open" data-c="${c}" data-m="${m}" title="${tip}. Press to use this time.">Open</button></td>`
+        : `<td><div class="cell ${st}" title="${tip}">${WORD[st]}</div></td>`;
+    }).join("");
+    const mcells = machines.map((k, i) => (data.machines[k] || []).includes(m)
+      ? `<td class="${i ? "" : "sep"}"><div class="cell free" title="${esc(data.machine_labels[k])} free at ${fmtTime(m)}">Free</div></td>`
+      : `<td class="${i ? "" : "sep"}"><div class="cell past" title="${esc(data.machine_labels[k])} not free at ${fmtTime(m)}">–</div></td>`).join("");
+    rows += `<tr class="${prime ? "prime" : ""} ${mine ? "mine" : ""}"><th class="time" scope="row">${fmtTime(m)}${prime ? "<small>Prime Time</small>" : ""}</th>${cells}${mcells}</tr>`;
   }
-  $("#body").innerHTML = `<div class="wrap"><table><thead><tr><th class="time" scope="col">Time</th>${courts.map((c) => `<th scope="col">Court ${c}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  const head = courts.map((c) => `<th scope="col">Court ${c}${mc.has(c) ? `<small>ball machine OK</small>` : ""}</th>`).join("")
+    + machines.map((k, i) => `<th scope="col" class="mach ${i ? "" : "sep"}">${esc((data.machine_labels[k] || k).replace(/^./, (x) => x.toUpperCase()))}</th>`).join("");
+  $("#body").innerHTML = (anyOpen ? "" : `<div class="card" style="margin-bottom:12px"><p style="margin:0">No court is open on this day right now.</p></div>`)
+    + `<div class="wrap"><table><thead><tr><th class="time" scope="col">Time</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  document.querySelectorAll("button.cell.open").forEach((b) => (b.onclick = () => pick(+b.dataset.c, +b.dataset.m)));
   const mineRow = document.querySelector("tr.mine");
-  if (mineRow) mineRow.scrollIntoView({ block: "center" });
+  if (mineRow) mineRow.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
+}
+
+// Pressing an open court sends that date, time and court to the booking form.
+function pick(court, m) {
+  let ok = false;
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: "wacb-pick", date: day, time: m, court }, location.origin);
+      ok = true;
+    }
+  } catch (e) { /* the main window is gone */ }
+  toast(ok ? `Sent ${fmtTime(m)} on court ${court} to your booking form.` : "Open the booking form in WAC Court Booker first.");
 }
 
 async function load() {
-  if (busy) return;
+  if (busy) { again = true; return; }
   busy = true; setTitle();
-  ["#refresh", "#prev", "#next"].forEach((s) => ($(s).disabled = true));
+  ["#refresh", "#prev", "#next", "#day"].forEach((s) => ($(s).disabled = true));
   $("#status").textContent = "";
-  $("#body").innerHTML = `<div class="card log" id="log"><p><span class="spin"></span>Signing in to the club site…</p></div>`;
+  if (!last || last !== day) $("#body").innerHTML = `<div class="card" id="log"><p><span class="spin"></span>Reading the court sheet…</p></div>`;
   try {
     const r = await api("/api/job", { kind: "calendar", date: day, login });
     if (!r.ok) throw new Error((r.errors || []).join(" "));
     let j = r.job;
     while (!j.done) {
-      await new Promise((ok) => setTimeout(ok, 900));
+      await new Promise((ok) => setTimeout(ok, 400));
       const x = await api("/api/job?id=" + encodeURIComponent(j.id));
       if (!x.ok) throw new Error("The check stopped.");
       j = x.job;
-      if (!j.done) $("#log").innerHTML = `<p><span class="spin"></span>${esc(j.lines[j.lines.length - 1] || "Signing in to the club site…")}</p><p class="muted small">This takes about a minute.</p>`;
+      const log = $("#log");
+      if (!j.done && log) log.innerHTML = `<p><span class="spin"></span>${esc(j.lines[j.lines.length - 1] || "Reading the court sheet…")}</p>`;
     }
     if (!j.ok || !j.data) throw new Error(j.lines.join(" ") || "Couldn't read the court sheet.");
-    $("#status").textContent = `Read from the club site at ${j.data.read_at}. Press Refresh to read it again.`;
+    if (j.data.date !== day) return;
+    $("#status").textContent = `Read from the club site at ${j.data.read_at}. Press an open court to use that time in your booking.`;
+    last = day;
     draw(j.data);
   } catch (e) {
+    last = null;
     $("#body").innerHTML = `<div class="card"><p class="bad">${esc(e.message)}</p><p class="muted small">Press Refresh to try again.</p></div>`;
   } finally {
     busy = false;
-    ["#refresh", "#prev", "#next"].forEach((s) => ($(s).disabled = false));
+    ["#refresh", "#prev", "#next", "#day"].forEach((s) => ($(s).disabled = false));
+    if (again) { again = false; load(); }
   }
 }
 
@@ -160,10 +210,12 @@ function shift(n) { const d = dateOf(day); d.setDate(d.getDate() + n); day = iso
 $("#refresh").onclick = load;
 $("#prev").onclick = () => shift(-1);
 $("#next").onclick = () => shift(1);
+$("#day").onchange = (e) => { if (e.target.value) { day = e.target.value; mineStart = null; load(); } };
+window.addEventListener("hashchange", () => { if (readHash()) { last = null; load(); } });
 setInterval(() => { api("/api/heartbeat", {}).catch(() => {}); }, 30000);
 
 (async () => {
-  if (!day) { $("#body").innerHTML = `<div class="card"><p>Open this from a booking in WAC Court Booker.</p></div>`; return; }
+  if (!TOKEN) { $("#body").innerHTML = `<div class="card"><p>Open this from WAC Court Booker.</p></div>`; return; }
   try { const s = await api("/api/state"); PRIME = (s.prime_time || {}).spans || []; } catch (e) { /* drawn without Prime Time rows */ }
   load();
 })();

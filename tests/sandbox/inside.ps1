@@ -240,7 +240,7 @@ try {
             $titles = @($st.bookings | ForEach-Object { $_.title }) -join '; '
             Invoke-RestMethod -Method Post "$base/api/quit" -Headers @{ 'X-WACB-Token' = $tok } -ContentType 'application/json' -Body '{}' -TimeoutSec 10 | Out-Null
             $stopped = $wp.WaitForExit(20000)
-            $webOk = $page.Content -match 'WAC Court Booker' -and $cal.Content -match 'Court calendar' -and $denied -and $st.version -eq $expected -and @($st.bookings).Count -ge 1 -and $stopped
+            $webOk = $page.Content -match 'WAC Court Booker' -and $cal.Content -match 'Available courts' -and $denied -and $st.version -eq $expected -and @($st.bookings).Count -ge 1 -and $stopped
             $detail = "page=$($page.StatusCode) calendar=$($cal.StatusCode) no-token refused=$denied version=$($st.version) bookings: $titles; stopped=$stopped"
         } catch { $detail = "error: $($_.Exception.Message)" }
     }

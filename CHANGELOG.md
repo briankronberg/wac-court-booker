@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2
+
+- **Fix: the calendar showed the wrong day.** Opening it again for another date reused the window and kept the old day. It now follows the date you pick, and also has its own date box.
+- **Fix: courts 8, 9 and 10 in the calendar.** Availability now comes straight from the club's own data for all 8 courts, the same data its court sheet is drawn from, instead of reading the sheet's list 15 rows at a time.
+- **Much faster.** The calendar and the court check read a whole day in one request: a few seconds the first time (signing in), about a second after that.
+- The calendar says why a court is taken (**Booked** by a member, or **Blocked** for a lesson, league, event or closing), shows when each ball machine is free, and greys out times already past. Press an open court to use that date, time and court in your booking.
+- **Calendar view** is now **See Available Courts**, and opens on today if you haven't picked a date.
+- **Are courts open?** is now **Validate booking**, next to **Save booking**. It also works for weekly bookings (it checks the next date).
+
 ## 0.3.1
 
 - **Fix: courts 8, 9 and 10 were never seen.** The club's court sheet opens with only courts 2-6 selected, and the app read it as it opened. Every booking, the court check and the calendar missed courts 8-10 (a booking with "any other court" never got one of them). The app now selects every court before it reads the sheet, which also shows the 5:00 and 5:30 AM times on those courts.

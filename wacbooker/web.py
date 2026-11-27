@@ -23,8 +23,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
-from . import APP_NAME, __version__, clock, clubtime, config, creds, notify, paths, results, runner, scheduler
+from . import APP_NAME, __version__, clock, clubtime, config, creds, live, notify, paths, results, runner, scheduler
+from . import site as site_mod
 from .config import Booking, Login
+from .engine import SiteError
 
 REPO = "briankronberg/wac-court-booker"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
@@ -191,6 +193,17 @@ class WebApp:
         self.update_cache: tuple[float, dict] | None = None
         self.last_beat: float | None = None
         self.stop_requested = False
+        self._live: live.Live | None = None
+
+    @property
+    def live(self) -> live.Live:
+        if self._live is None:  # its thread starts on first use
+            self._live = live.Live()
+        return self._live
+
+    def close(self) -> None:
+        if self._live is not None:
+            self._live.close()
 
     # --------------------------------------------------- reading
     def state(self) -> dict:
@@ -377,6 +390,8 @@ class WebApp:
                 nick = existing.nickname if existing else ("me" if not cfg.logins else user)
             creds.set_password(user, pw)
             del pw
+            if self._live is not None:
+                self._live.forget(user)
             login = Login(nick, user)
             config.put_login(doc, login)
             out = self._commit(doc, f"login '{nick}'")
@@ -397,6 +412,8 @@ class WebApp:
             out = self._commit(doc, f"removed login '{lg.nickname}'")
             if out.get("ok"):
                 creds.delete_password(lg.username)
+                if self._live is not None:
+                    self._live.forget(lg.username)
             return out
 
     def settings(self, body: dict) -> dict:
@@ -458,7 +475,7 @@ class WebApp:
             titles = {"test-login": "Testing your login", "buddies": "Reading your buddy list",
                       "family": "Reading your family members", "new-login": "Checking your login",
                       "dry-run": "Looking at the court sheet", "clock": "Checking the PC clock",
-                      "test-booking": "Test booking", "court-check": "Are courts open?",
+                      "test-booking": "Test booking", "court-check": "Validate booking",
                       "calendar": "Court calendar"}
             if kind not in titles:
                 raise UserError("Unknown check.")
@@ -535,22 +552,30 @@ class WebApp:
             except ValueError:
                 raise UserError("Choose the date first.")
             if kind == "calendar":
-                def work():
-                    job.data = asyncio.run(runner.calendar_day(cfg, login, day, say))
-                    return job.data is not None
-                return work
+                return self._live_work(job, cfg, login, lambda site: runner.calendar_on(site, day, say))
             try:
                 start, length = int(body.get("time")), int(body.get("length") or 60)
             except (TypeError, ValueError):
                 raise UserError("Choose the start time first.")
             lengths = [length] + ([x for x in (60, 30) if x < length] if body.get("shorter_ok") else [])
             courts = list(body.get("courts") or ["any"])
-
-            def work():
-                job.data = asyncio.run(runner.court_check(cfg, login, day, start, lengths, courts, say))
-                return job.data is not None
-            return work
+            machine = body.get("machine") or None
+            if machine is not None and machine not in site_mod.MACHINES:
+                raise UserError("Unknown ball machine.")
+            return self._live_work(job, cfg, login, lambda site: runner.court_check_on(
+                site, day, start, lengths, courts, say, machine))
         raise UserError("Unknown check.")
+
+    def _live_work(self, job: Job, cfg: config.Config, login: Login, fn) -> Callable:
+        """A read-only look through the warm club session; its result goes to job.data."""
+        def work():
+            try:
+                job.data = self.live.run(cfg, login, fn, job.say)
+            except SiteError as e:
+                job.say(f"Couldn't read the club site: {e}")
+                return False
+            return job.data is not None
+        return work
 
     def job_view(self, job_id: str) -> dict:
         if not self.job or self.job.id != job_id:
@@ -798,6 +823,7 @@ class Server:
             self.httpd.serve_forever(poll_interval=0.5)
         finally:
             self.httpd.server_close()
+            self.app.close()
 
 
 # ---------------------------------------------------------------- opening the window

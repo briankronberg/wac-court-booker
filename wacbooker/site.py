@@ -18,6 +18,7 @@ from every log line.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import time
@@ -56,7 +57,57 @@ SERVICES = {
                 ("3.1 Primetime Singles", "3b39d597-4202-4680-9120-73d3080a5201")],
 }
 RESOURCE_TO_COURT = {"1": 2, "92": 3, "93": 4, "94": 5, "95": 6, "96": 8, "97": 9, "98": 10}
+COURT_TO_RESOURCE = {c: r for r, c in RESOURCE_TO_COURT.items()}
 COURT_WORDS = {10: "ten"}
+
+# The court sheet itself is built in the browser from the club's JSON web service
+# (Library/OlsService.asmx). Reading it directly takes one call per day instead of
+# paging through the list 15 rows at a time.
+SITE_ID = "758"
+API_PATH = "/LCRAC/Library/OlsService.asmx/"
+DAY_MINUTES = 1440
+FIRST_START, LAST_END = 5 * 60, 22 * 60  # the club's tennis hours
+
+# Ball machines are "providers" on their own services, and only go on some courts.
+# Prime Time has its own services, like singles.
+MACHINES = {
+    "genie": {"label": "Genie ball machine", "short": "Genie", "provider": "442",
+              "services": [("3.01 Genie Ball Machine", "8f3e617f-fe3a-496b-8203-75c5dc6b4c93"),
+                           ("3.22 Primetime Genie Ball Machine", "cad5296f-bcf2-415b-98b7-c8d4cc025f97")]},
+    "regular": {"label": "regular ball machine", "short": "Regular", "provider": "121",
+                "services": [("3 Ball Machine", "1b21354d-1408-49e1-9afa-3b91d7bdab8b"),
+                             ("3.2 Primetime Ball Machine", "0914820e-799e-43f2-a07b-4310676ff317")]},
+}
+MACHINE_COURTS = (2, 3, 8, 9, 10)
+
+JS_API = r"""async ([url, body]) => {
+  const r = await fetch(url, {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest'},
+    body: JSON.stringify(body)});
+  return {status: r.status, url: r.url, text: await r.text()}; }"""
+
+
+def minutes(avail: list[dict] | None) -> list[bool]:
+    """The web service's day (1440 {TimeId, IsAvailable}) as one flag per minute."""
+    out = [False] * DAY_MINUTES
+    for a in avail or []:
+        t = a.get("TimeId")
+        if isinstance(t, int) and 0 <= t < DAY_MINUTES:
+            out[t] = bool(a.get("IsAvailable"))
+    return out
+
+
+def both(*days: list[bool]) -> list[bool]:
+    """Free only where every day says free (as the club page combines them)."""
+    return [all(d[i] for d in days) for i in range(DAY_MINUTES)]
+
+
+def free_for(day: list[bool], start: int, length: int) -> bool:
+    return 0 <= start and start + length <= DAY_MINUTES and all(day[start:start + length])
+
+
+def open_starts(day: list[bool], length: int = 30, step: int = 30) -> list[int]:
+    return [m for m in range(FIRST_START, LAST_END - length + 1, step) if free_for(day, m, length)]
 
 SHIM = ("window.confirm=()=>true;window.alert=(m)=>{};window.prompt=()=>'yes';"
         "window.__wacShim=Date.now();'shim'")
@@ -481,26 +532,6 @@ class ClubSite:
                     break
         return result
 
-    async def day_open(self, date: str, play: str = "doubles",
-                       progress: Callable[[int], None] | None = None) -> list[Slot]:
-        """Every open 30-minute slot of the day. The list shows 15 rows a page, so it
-        steps through the day with the time-of-day search, from the latest start seen."""
-        seen: dict[tuple[int, int], Slot] = {}
-        for _, svc in SERVICES[play]:
-            start, last = None, -1
-            for _ in range(40):
-                shown = await self.load_grid(svc, date, 30, start)
-                for s in shown:
-                    if s["et"] - s["st"] == 30:
-                        seen.setdefault((s["st"], s["court"]), Slot(date, s["st"], 30, s["court"], s["r"], svc))
-                sts = [s["st"] for s in shown]
-                if not sts or max(sts) <= last:
-                    break
-                last = start = max(sts)
-                if progress:
-                    progress(last)
-        return sorted(seen.values(), key=lambda s: (s.start, s.court))
-
     async def list_open(self, date: str, length: int, play: str) -> list[Slot]:
         """Open slots in each service's default view (the earliest times of the day)."""
         out: list[Slot] = []
@@ -508,6 +539,61 @@ class ClubSite:
             for s in await self.load_grid(svc, date, length, None):
                 if s["et"] - s["st"] == length:
                     out.append(Slot(date, s["st"], length, s["court"], s["r"], svc))
+        return out
+
+    # ---------------------------------------------------------------- web service (read-only)
+    async def api(self, method: str, payload: dict, timeout: float = 60):
+        """Call the club's scheduler web service with this sign-in. Returns its Value.
+        Signs in again once if the session has run out."""
+        for attempt in (1, 2):
+            if "spectrumng" not in (await self.url()).lower():
+                await self.goto(HOME_URL, timeout=60)
+            r = await self.js(JS_API, [API_PATH + method, payload], timeout)
+            text = (r or {}).get("text") or ""
+            if (r or {}).get("status") == 200 and text.lstrip().startswith("{"):
+                try:
+                    d = json.loads(text).get("d") or {}
+                except ValueError:
+                    d = None
+                if isinstance(d, dict):
+                    if d.get("IsException"):
+                        raise SiteError(f"the club site said: {str(d.get('Message') or 'error')[:160]}")
+                    return d.get("Value")
+            if attempt == 1 and ("login" in str((r or {}).get("url", "")).lower() or "<html" in text[:300].lower()):
+                self.log("web service needs a fresh sign-in")
+                await self.login()
+                continue
+            raise SiteError(f"the club's web service didn't answer ({method}: HTTP {(r or {}).get('status')})")
+        raise SiteError("the club's web service didn't answer")
+
+    async def day_availability(self, date: str, svc: str | None = None, machines: bool = False) -> dict:
+        """Every court's free minutes on `date` (m/d/Y), as the court sheet works them out:
+        court free AND the service offered then AND the club open. With `machines`, also
+        each ball machine's free minutes (its own service, any Prime Time variant, and
+        the club's hours). Booked times (no names) come back too."""
+        svc = svc or SERVICES["doubles"][0][1]
+        site_day = minutes(await self.api("GetSiteAvailability", {"siteId": SITE_ID, "selectedDate": date}))
+        svc_day = minutes(await self.api("GetServiceAvailability", {"serviceUniqueId": svc, "selectedDate": date}))
+        res = await self.api("GetSchedulerResourceAvailability",
+                             {"siteId": SITE_ID, "resourceIds": list(RESOURCE_TO_COURT), "selectedDate": date}) or []
+        courts, booked = {}, {}
+        for x in res:
+            c = RESOURCE_TO_COURT.get(str(x.get("Id")))
+            if c is None:
+                continue
+            courts[c] = both(minutes(x.get("Availability")), svc_day, site_day)
+            booked[c] = [(int(b.get("FromMinutes", 0)), int(b.get("ToMinutes", 0))) for b in x.get("BookingDetails") or []]
+        out = {"courts": courts, "booked": booked, "machines": {}}
+        if machines:
+            pids = [m["provider"] for m in MACHINES.values()]
+            prov = {str(x.get("Id")): minutes(x.get("Availability")) for x in await self.api(
+                "GetSchedulerProviderAvailability", {"siteId": SITE_ID, "providerIds": pids, "selectedDate": date}) or []}
+            for key, m in MACHINES.items():
+                offered = [False] * DAY_MINUTES
+                for _, g in m["services"]:
+                    s = minutes(await self.api("GetServiceAvailability", {"serviceUniqueId": g, "selectedDate": date}))
+                    offered = [a or b for a, b in zip(offered, s)]
+                out["machines"][key] = both(prov.get(m["provider"], [False] * DAY_MINUTES), offered, site_day)
         return out
 
     def _slot_selector(self, slot: Slot) -> str:

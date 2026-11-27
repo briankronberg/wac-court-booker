@@ -340,7 +340,7 @@ function followJob(job, onDone) {
     const q = j.question && answered !== j.question.text ? `<div class="question"><p>${esc(j.question.text)}</p>
         <div class="row"><button class="btn primary" id="q-yes" type="button">Yes</button><button class="btn" id="q-no" type="button">No</button></div></div>` : "";
     const status = j.done ? (j.ok ? `<p class="status-ok">Done.</p>` : `<p class="status-no">Finished with a problem (see above).</p>`)
-      : (q ? "" : `<p><span class="spin"></span>Working on it. This takes about a minute; you can wait here.</p>`);
+      : (q ? "" : `<p><span class="spin"></span>Working on it. This can take up to a minute; you can wait here.</p>`);
     openDialog(`<h2>${esc(j.title)}</h2><div class="log" id="joblog">${lines}</div>${q}${status}
       ${j.done ? `<div class="row end"><button class="btn primary" id="j-close" type="button">Close</button></div>` : ""}`);
     const log = $("#joblog"); log.scrollTop = log.scrollHeight;
@@ -602,8 +602,8 @@ function renderForm(el) {
   h += sec(`Who are you playing with?`, people, `Choose ${need === 1 ? "1 person" : "3 people"}. Family members are at the top.`);
 
   h += sec("How often?", `<div class="row once-row"><div class="choices">${choice("weekly", true, "Every week")}${choice("weekly", false, "Just once")}</div>
-     ${f.weekly ? "" : `<div class="row avail"><button class="btn" id="f-check" type="button">Are courts open?</button><button class="btn" id="f-cal" type="button">Calendar view</button></div>`}</div>`,
-    f.weekly ? "" : "For a one-off date you can look at the club's court sheet first: check your time, or see every court for the day.");
+     ${f.weekly ? "" : `<div class="row avail"><button class="btn" id="f-cal" type="button">See Available Courts</button></div>`}</div>`,
+    f.weekly ? "" : "For a one-off date you can see every court for the day first. Press an open court there to use its time here.");
   if (f.weekly) h += sec("Which day?", `<div class="choices">${DAYS.map((d, i) => choice("day", i, d.slice(0, 3), "")).join("")}</div>`);
   else {
     const min = new Date(Date.now() + (f.play === "singles" ? 1 : 7) * 864e5).toISOString().slice(0, 10);
@@ -631,7 +631,7 @@ function renderForm(el) {
   const s = summaryText(f);
   h += `<div class="summary">${f.errors.length ? `<ul class="errors">${f.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
     <p>${s.ok ? "<b>You're booking:</b> " : ""}${esc(s.text)}</p>
-    <div class="row"><button class="btn primary big" id="f-save" type="button" ${s.ok ? "" : "disabled"}>${f.old_name ? "Save changes" : "Save booking"}</button><button class="btn" id="f-cancel2" type="button">Cancel</button></div></div>`;
+    <div class="row"><button class="btn big" id="f-check" type="button" title="Check on the club site that courts are open at this time">Validate booking</button><button class="btn primary big" id="f-save" type="button" ${s.ok ? "" : "disabled"}>${f.old_name ? "Save changes" : "Save booking"}</button><button class="btn" id="f-cancel2" type="button">Cancel</button></div></div>`;
   el.innerHTML = h;
 
   const cancel = () => { form = null; render(); };
@@ -680,20 +680,43 @@ function renderForm(el) {
     f.time = x.start; f.length = x.len; if (f.length === 30) f.shorter_ok = false;
     f.errors = []; render(); toast(`Changed to ${x.label}.`);
   }));
-  if ($("#f-check")) $("#f-check").onclick = () => {
-    if (!f.date) { toast("Choose the date first (below).", true); return; }
-    if (f.time === null) { toast("Choose the start time first (below).", true); return; }
-    runJob({ kind: "court-check", login: f.login, date: f.date, time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: f.courts.length ? f.courts : ["any"] });
+  $("#f-check").onclick = () => {
+    const day = f.weekly ? nextWeekly(f.day) : f.date;
+    if (day === null || day === undefined) { toast(f.weekly ? "Choose the day first." : "Choose the date first.", true); return; }
+    if (f.time === null) { toast("Choose the start time first.", true); return; }
+    runJob({ kind: "court-check", login: f.login, date: day, time: f.time, length: f.length, shorter_ok: f.shorter_ok, courts: f.courts.length ? f.courts : ["any"] });
   };
-  if ($("#f-cal")) $("#f-cal").onclick = () => {
-    if (!f.date) { toast("Choose the date first (below).", true); return; }
-    const q = new URLSearchParams({ t: TOKEN, d: f.date, l: f.login || "" });
-    if (f.time !== null) { q.set("s", f.time); q.set("n", f.length); }
-    const w = window.open("/calendar#" + q.toString(), "wacb-calendar", "popup,width=1100,height=900");
-    if (!w) toast("Windows blocked the calendar window. Try again.", true);
-  };
+  if ($("#f-cal")) $("#f-cal").onclick = () => openCalendar(f.date || isoDay(new Date()), f.login, f.date ? f.time : null, f.length);
   $("#f-save").onclick = saveForm;
 }
+
+// The date a weekly booking books next: the first such weekday more than a week away.
+function nextWeekly(wd) {
+  if (wd === null || wd === undefined) return null;
+  const d = new Date(); d.setDate(d.getDate() + 7);
+  while ((d.getDay() + 6) % 7 !== wd) d.setDate(d.getDate() + 1);
+  return isoDay(d);
+}
+function isoDay(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+
+function openCalendar(day, login, time, length) {
+  const q = new URLSearchParams({ t: TOKEN, d: day, l: login || "" });
+  if (time !== null && time !== undefined) { q.set("s", time); q.set("n", length); }
+  const w = window.open("/calendar#" + q.toString(), "wacb-calendar", "popup,width=1200,height=900");
+  if (!w) { toast("Windows blocked the calendar window. Try again.", true); return; }
+  try { w.focus(); } catch (e) { /* fine */ }
+}
+
+// A court picked in the calendar window fills the open booking form.
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data || e.data.type !== "wacb-pick") return;
+  const { date: d, time: m, court: c } = e.data;
+  if (!form) { toast("Press Book a court first, then pick a court in the calendar."); return; }
+  form.weekly = false; form.date = d; form.time = +m;
+  if (S.courts.includes(+c)) form.courts = [+c, ...form.courts.filter((x) => x !== +c)];
+  form.errors = []; render(); window.focus();
+  toast(`Using ${fmtTime(+m)} on ${d}, court ${c} first.`);
+});
 
 async function saveForm() {
   const f = form;

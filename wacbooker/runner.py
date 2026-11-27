@@ -13,6 +13,7 @@ from typing import Callable
 from . import clock, clubtime, config, creds, notify, paths, results
 from .config import Booking, Config, Login
 from .engine import CONFIRMED, NOT_READY, UNKNOWN, Engine, RealClock, SiteError, Slot
+from . import site as site_mod
 from .site import ClubSite
 
 Say = Callable[[str], None]
@@ -370,66 +371,94 @@ def _court_list(courts: list[int]) -> str:
     return c[0] if len(c) == 1 else ", ".join(c[:-1]) + " and " + c[-1]
 
 
-async def court_check(cfg: Config, login: Login, day, start: int, lengths: list[int], courts: list,
-                      say: Say) -> dict | None:
-    """Which courts are free right now at `start` on `day`, for each length."""
-    log = _log(f"court check {login.nickname}")
-    try:
-        site = await start_site(cfg, login, log)
-    except SiteError as e:
-        say(f"The browser didn't start: {e}")
-        return None
-    try:
-        await site.login()
-        found = await site.find_open(day.strftime("%m/%d/%Y"), start, lengths, "doubles")
-        when = f"{clubtime.fmt_time(start)} on {day:%a %b} {day.day}"
-        out = {L: sorted(found.get(L, {})) for L in lengths}
-        named = [c for c in courts if c != "any"]
-        main = out.get(lengths[0], [])
-        if main:
-            say(f"Yes. At {when}, for {lengths[0]} minutes, court{'s' if len(main) > 1 else ''} "
-                f"{_court_list(main)} {'are' if len(main) > 1 else 'is'} open right now.")
-            mine = [c for c in named if c in main]
-            if named and mine:
-                say(f"Your first choice that's open: court {mine[0]}.")
-            elif named:
-                say(f"None of your courts ({_court_list(named)}) is open, but the others are.")
-        else:
-            say(f"No court is open at {when} for {lengths[0]} minutes right now.")
-            for L in lengths[1:]:
-                if out.get(L):
-                    say(f"For {L} minutes: court{'s' if len(out[L]) > 1 else ''} {_court_list(out[L])}.")
-        say("Courts can still be taken (or freed) before the club opens booking for that time.")
-        return {"open": out}
-    except (SiteError, LookupError) as e:
-        say(f"Couldn't read the court sheet: {e}")
-        return None
-    finally:
-        await site.close()
+def past_cut(day_minutes: list[bool], day, now: datetime) -> list[bool]:
+    """Today, times already gone can't be booked (the club page does the same)."""
+    if day != now.date():
+        return day_minutes
+    cut = min(now.hour * 60 + now.minute + 1, len(day_minutes))
+    return [False] * cut + day_minutes[cut:]
 
 
-async def calendar_day(cfg: Config, login: Login, day, say: Say) -> dict | None:
-    """Every court's open half hours on `day`, for the calendar window."""
-    log = _log(f"calendar {login.nickname}")
-    try:
-        site = await start_site(cfg, login, log)
-    except SiteError as e:
-        say(f"The browser didn't start: {e}")
-        return None
-    try:
-        await site.login()
-        say("Reading the court sheet for the whole day…")
-        slots = await site.day_open(day.strftime("%m/%d/%Y"), "doubles",
-                                    lambda m: say(f"Read up to {clubtime.fmt_time(m)}…"))
-        open_ = {str(c): sorted(s.start for s in slots if s.court == c) for c in config.COURTS}
-        say(f"Done: {len(slots)} open half hours.")
-        return {"date": day.isoformat(), "courts": list(config.COURTS), "open": open_,
-                "read_at": clubtime.fmt_time(clubtime.now_central().hour * 60 + clubtime.now_central().minute)}
-    except (SiteError, LookupError) as e:
-        say(f"Couldn't read the court sheet: {e}")
-        return None
-    finally:
-        await site.close()
+def read_at(now: datetime) -> str:
+    return clubtime.fmt_time(now.hour * 60 + now.minute)
+
+
+def calendar_cells(avail: dict, day, now: datetime) -> dict:
+    """The calendar window's data: for each court and half hour, 'open', 'booked'
+    (a member's reservation), 'closed' (a lesson, a block or the club's hours) or
+    'past'; and the half hours each ball machine is free."""
+    starts = list(range(site_mod.FIRST_START, site_mod.LAST_END, 30))
+    today_cut = now.hour * 60 + now.minute if day == now.date() else -1
+    cells = {}
+    for c in config.COURTS:
+        free = avail["courts"].get(c, [False] * site_mod.DAY_MINUTES)
+        booked = avail["booked"].get(c, [])
+        row = {}
+        for m in starts:
+            if m + 30 <= today_cut:
+                row[m] = "past"
+            elif site_mod.free_for(past_cut(free, day, now), m, 30):
+                row[m] = "open"
+            elif any(a < m + 30 and m < b for a, b in booked):
+                row[m] = "booked"
+            else:
+                row[m] = "closed"
+        cells[str(c)] = row
+    machines = {k: site_mod.open_starts(past_cut(v, day, now)) for k, v in avail.get("machines", {}).items()}
+    return {"date": day.isoformat(), "courts": list(config.COURTS), "starts": starts, "cells": cells,
+            "machines": machines, "machine_courts": list(site_mod.MACHINE_COURTS),
+            "machine_labels": {k: m["label"] for k, m in site_mod.MACHINES.items()}, "read_at": read_at(now)}
+
+
+def courts_free(avail: dict, day, now: datetime, start: int, length: int, machine: str | None = None) -> list[int]:
+    """Courts free for the whole of start..start+length (with a ball machine: only the
+    courts it goes on, and only if the machine is free too)."""
+    if machine:
+        m = avail.get("machines", {}).get(machine)
+        if not m or not site_mod.free_for(past_cut(m, day, now), start, length):
+            return []
+    pool = site_mod.MACHINE_COURTS if machine else config.COURTS
+    return [c for c in pool if site_mod.free_for(past_cut(avail["courts"].get(c, []) or [False] * 1440, day, now),
+                                                 start, length)]
+
+
+async def court_check_on(site: ClubSite, day, start: int, lengths: list[int], courts: list, say: Say,
+                         machine: str | None = None) -> dict:
+    """Which courts are free right now at `start` on `day`, for each length (read-only)."""
+    avail = await site.day_availability(day.strftime("%m/%d/%Y"), machines=bool(machine))
+    now = clubtime.now_central()
+    when = f"{clubtime.fmt_time(start)} on {day:%a %b} {day.day}"
+    out = {L: courts_free(avail, day, now, start, L, machine) for L in lengths}
+    named = [c for c in courts if c != "any"]
+    main = out.get(lengths[0], [])
+    what = f" with the {site_mod.MACHINES[machine]['label']}" if machine else ""
+    if machine and not site_mod.free_for(past_cut(avail["machines"].get(machine, []), day, now), start, lengths[0]):
+        say(f"The {site_mod.MACHINES[machine]['label']} is taken at {when} for {lengths[0]} minutes.")
+        other = next((k for k in site_mod.MACHINES if k != machine), None)
+        if other and courts_free(avail, day, now, start, lengths[0], other):
+            say(f"The {site_mod.MACHINES[other]['label']} is free then.")
+    elif main:
+        say(f"Yes. At {when}, for {lengths[0]} minutes{what}, court{'s' if len(main) > 1 else ''} "
+            f"{_court_list(main)} {'are' if len(main) > 1 else 'is'} open right now.")
+        mine = [c for c in named if c in main]
+        if named and mine:
+            say(f"Your first choice that's open: court {mine[0]}.")
+        elif named:
+            say(f"None of your courts ({_court_list(named)}) is open, but the others are.")
+    else:
+        say(f"No court{' that takes a ball machine' if machine else ''} is open at {when} for {lengths[0]} minutes right now.")
+    for L in lengths[1:]:
+        if not main and out.get(L):
+            say(f"For {L} minutes: court{'s' if len(out[L]) > 1 else ''} {_court_list(out[L])}.")
+    say("Courts can still be taken (or freed) before the club opens booking for that time.")
+    return {"open": out}
+
+
+async def calendar_on(site: ClubSite, day, say: Say) -> dict:
+    """Every court's half hours on `day`, and the ball machines', for the calendar window."""
+    say("Reading the court sheet…")
+    avail = await site.day_availability(day.strftime("%m/%d/%Y"), machines=True)
+    return calendar_cells(avail, day, clubtime.now_central())
 
 
 def pick_quiet_slot(slots: list[Slot], courts: list, now: datetime) -> Slot | None:
