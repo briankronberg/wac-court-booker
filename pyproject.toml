@@ -28,7 +28,7 @@ wac-booker-web = "wacbooker.web:gui_main"
 packages = ["wacbooker", "wacbooker.web"]
 
 [tool.setuptools.package-data]
-"wacbooker.web" = ["*.html"]
+"wacbooker.web" = ["*.html", "*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

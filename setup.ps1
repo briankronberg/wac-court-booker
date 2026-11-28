@@ -184,12 +184,14 @@ try {
     New-Item -Path $key -Force | Out-Null
     Set-ItemProperty -Path $key -Name DisplayName -Value 'WAC Court Booker'
     $sh = New-Object -ComObject WScript.Shell
+    $icon = & $vpy -c "import pathlib, wacbooker; print(pathlib.Path(wacbooker.__file__).parent / 'web' / 'app.ico')"
     function Save-Shortcut($path) {
         $s = $sh.CreateShortcut($path)
         $s.TargetPath = Join-Path $venv 'Scripts\wac-booker-web.exe'
         if ($AppHome) { $s.Arguments = "--home `"$app`"" }
         $s.WorkingDirectory = $app
         $s.Description = 'Book WAC Hartland tennis courts when each booking window opens'
+        if ($icon -and (Test-Path $icon)) { $s.IconLocation = "$icon,0" }
         $s.Save()
     }
     Save-Shortcut (Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk')

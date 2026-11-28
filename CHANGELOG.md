@@ -2,6 +2,7 @@
 
 ## 0.6.4
 
+- The desktop and Start-menu shortcuts now show the app's tennis ball. Run setup.cmd again (or press **Put one on my desktop** in Settings) to update an existing shortcut.
 - Setup no longer shows a long warning about `wacbooker.web` while it installs the app. Nothing changes in how the app works.
 
 ## 0.6.3
