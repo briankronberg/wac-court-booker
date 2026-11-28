@@ -40,3 +40,5 @@ def test_setup_gives_the_shortcuts_the_icon():
     text = setup.read_text(encoding="utf-8")
     start = text.index("function Save-Shortcut")
     assert "IconLocation" in text[start:start + 800]
+    line = next(l for l in text.splitlines() if "$icon = &" in l)
+    assert " -I -c " in line   # isolated: never the copy in the current folder

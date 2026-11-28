@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.5
+
+- **Fix:** setup could point the shortcuts' tennis-ball icon at the wrong copy of the app when it was started from a folder holding the app's source files. It now always uses the installed app's icon.
+
 ## 0.6.4
 
 - The desktop and Start-menu shortcuts now show the app's tennis ball. Run setup.cmd again (or press **Put one on my desktop** in Settings) to update an existing shortcut.
