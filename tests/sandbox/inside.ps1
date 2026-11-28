@@ -259,12 +259,16 @@ try {
     $kept = ((Test-Path $realConfig) -and (Get-FileHash $realConfig).Hash -eq $realAfter) -or (-not $realAfter)
     Rec 'setup.cmd again (update)' ($code -eq 0 -and $kept) "exit $code, bookings.yaml kept=$kept"
     $startLnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'WAC Court Booker.lnk'
-    $target = if (Test-Path $startLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($startLnk).TargetPath } else { '' }
-    Rec 'Start-menu shortcut opens the page' ($target -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe')) "target=$target"
+    $startSc = if (Test-Path $startLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($startLnk) } else { $null }
+    $target = if ($startSc) { $startSc.TargetPath } else { '' }
+    $sIcon = if ($startSc) { $startSc.IconLocation } else { '' }
+    Rec 'Start-menu shortcut opens the page' ($target -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe') -and $sIcon -like '*\wacbooker\web\app.ico,0') "target=$target icon=$sIcon"
     # A first install always puts one on the desktop too, and the update keeps it.
     $deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'WAC Court Booker.lnk'
-    $dTarget = if (Test-Path $deskLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk).TargetPath } else { '' }
-    Rec 'desktop shortcut opens the page' ($dTarget -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe')) "target=$dTarget"
+    $deskSc = if (Test-Path $deskLnk) { (New-Object -ComObject WScript.Shell).CreateShortcut($deskLnk) } else { $null }
+    $dTarget = if ($deskSc) { $deskSc.TargetPath } else { '' }
+    $dIcon = if ($deskSc) { $deskSc.IconLocation } else { '' }
+    Rec 'desktop shortcut opens the page' ($dTarget -eq (Join-Path (Split-Path $exe) 'wac-booker-web.exe') -and $dIcon -like '*\wacbooker\web\app.ico,0') "target=$dTarget icon=$dIcon"
 
     # 9. The offline unit tests, on this Python.
     Run-Native $vpy @('-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'pytest') 'pip-pytest.txt' | Out-Null
