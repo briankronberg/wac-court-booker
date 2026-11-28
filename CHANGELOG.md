@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4
+
+- Setup no longer shows a long warning about `wacbooker.web` while it installs the app. Nothing changes in how the app works.
+
 ## 0.6.3
 
 - **Fix:** when two logins book together and the club site hiccups for one of them while getting ready, that login gave up without saying why instead of trying again. It now tries again on its own court.
