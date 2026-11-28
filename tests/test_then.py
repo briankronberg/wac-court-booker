@@ -258,7 +258,9 @@ def test_book_now_books_the_second_when_the_first_failed(monkeypatch):
 def test_book_now_defers_the_second_when_its_window_is_closed(monkeypatch):
     # booked the moment the first window opens: the second session's window (it opens
     # `length` minutes later) is still closed — it is left to its own scheduled task.
-    now = clubtime.now_central()
+    fixed = datetime(2026, 12, 1, 12, 10, tzinfo=clubtime.CENTRAL)
+    monkeypatch.setattr(clubtime, "now_central", lambda: fixed)
+    now = fixed
     t = datetime.fromtimestamp(
         ((now + timedelta(hours=168)).timestamp() // 1800 + 1) * 1800, clubtime.CENTRAL)
     st = clubtime.slot_start(t.date(), t.hour * 60 + t.minute)
@@ -315,8 +317,10 @@ def test_book_now_group_defers_the_second_when_its_window_is_closed(monkeypatch)
     # the coordinated version of the same: the second session's window is still closed
     # while the first part books, so the second is left to its own task.
     from wacbooker.engine import RunResult, Slot
+    fixed = datetime(2026, 12, 1, 12, 10, tzinfo=clubtime.CENTRAL)
+    monkeypatch.setattr(clubtime, "now_central", lambda: fixed)
     clock, site = _book_now_setup(monkeypatch)
-    now = clubtime.now_central()
+    now = fixed
     t = datetime.fromtimestamp(
         ((now + timedelta(hours=168)).timestamp() // 1800 + 1) * 1800, clubtime.CENTRAL)
     raw = dict(name="g", login="me", play="doubles", partners=["A B", "C D", "E F"], date=t.date().isoformat(),

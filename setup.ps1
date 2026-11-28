@@ -184,7 +184,7 @@ try {
     New-Item -Path $key -Force | Out-Null
     Set-ItemProperty -Path $key -Name DisplayName -Value 'WAC Court Booker'
     $sh = New-Object -ComObject WScript.Shell
-    $icon = & $vpy -c "import pathlib, wacbooker; print(pathlib.Path(wacbooker.__file__).parent / 'web' / 'app.ico')"
+    $icon = & $vpy -I -c "import pathlib, wacbooker; print(pathlib.Path(wacbooker.__file__).parent / 'web' / 'app.ico')"
     function Save-Shortcut($path) {
         $s = $sh.CreateShortcut($path)
         $s.TargetPath = Join-Path $venv 'Scripts\wac-booker-web.exe'
