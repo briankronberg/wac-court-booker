@@ -326,9 +326,11 @@ def test_desktop_shortcut_points_at_the_window(srv, monkeypatch, tmp_path):
     monkeypatch.setattr(web, "web_exe", lambda: exe)
     monkeypatch.setattr(web, "desktop_shortcut_path", lambda: link)
     seen = {}
+    script = {}
 
     def fake_run(cmd, env=None, **k):
         seen.update(env)
+        script["text"] = cmd[-1]
         link.write_bytes(b"lnk")
         return web.subprocess.CompletedProcess(cmd, 0, "", "")
     monkeypatch.setattr(web.subprocess, "run", fake_run)
@@ -337,6 +339,8 @@ def test_desktop_shortcut_points_at_the_window(srv, monkeypatch, tmp_path):
     _, r = call(srv, "/api/desktop-shortcut", {})
     assert r["ok"], r
     assert seen["WACB_TARGET"] == str(exe) and seen["WACB_LNK"] == str(link)
+    assert "IconLocation" in script["text"]
+    assert seen["WACB_ICON"].endswith("app.ico")
     assert (tmp_path / "desktop-shortcut.txt").read_text().strip() == "Yes"
     assert call(srv, "/api/state")[1]["settings"]["desktop_shortcut"] is True
 

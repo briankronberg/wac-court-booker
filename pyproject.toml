@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wac-court-booker"
-version = "0.6.3"
+version = "0.6.4"
 description = "Books WAC Hartland tennis courts the moment each booking window opens."
 requires-python = ">=3.11"
 dependencies = [
@@ -25,10 +25,10 @@ wac-booker = "wacbooker.cli:main"
 wac-booker-web = "wacbooker.web:gui_main"
 
 [tool.setuptools]
-packages = ["wacbooker"]
+packages = ["wacbooker", "wacbooker.web"]
 
 [tool.setuptools.package-data]
-wacbooker = ["web/*.html"]
+"wacbooker.web" = ["*.html", "*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

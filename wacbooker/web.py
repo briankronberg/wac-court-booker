@@ -735,11 +735,13 @@ class WebApp:
             raise UserError("Couldn't find the app's program. Run setup.cmd again.")
         link = desktop_shortcut_path()
         env = dict(os.environ, WACB_LNK=str(link), WACB_TARGET=str(target), WACB_DIR=str(paths.home()),
-                   WACB_ARGS=f'--home "{paths.home()}"' if os.environ.get("WACB_HOME") else "")
+                   WACB_ARGS=f'--home "{paths.home()}"' if os.environ.get("WACB_HOME") else "",
+                   WACB_ICON=str(Path(__file__).with_name("web") / "app.ico"))
         script = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:WACB_LNK); "
                   "$s.TargetPath = $env:WACB_TARGET; $s.Arguments = $env:WACB_ARGS; "
                   "$s.WorkingDirectory = $env:WACB_DIR; "
-                  "$s.Description = 'Book WAC Hartland tennis courts when each booking window opens'; $s.Save()")
+                  "$s.Description = 'Book WAC Hartland tennis courts when each booking window opens'; "
+                  "if (Test-Path $env:WACB_ICON) { $s.IconLocation = $env:WACB_ICON + ',0' }; $s.Save()")
         try:
             r = subprocess.run([scheduler.pwsh(), "-NoProfile", "-NonInteractive", "-Command", script],
                                env=env, capture_output=True, text=True, timeout=60,

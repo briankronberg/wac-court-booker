@@ -4,6 +4,7 @@
 
 # Left out of the release zip (git archive): users get only the app, setup and README.
 tests/** export-ignore
+tools/** export-ignore
 docs/** export-ignore
 DEVELOPMENT.md export-ignore
 CHANGELOG.md export-ignore
